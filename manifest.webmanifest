@@ -1,0 +1,15 @@
+{
+  "name": "EPICSSCH Campo",
+  "short_name": "EPICSSCH Campo",
+  "description": "Entrevistas de brote y vigilancia ante desastres, sin conexión. Epidemiología Regional, CSS Chiriquí.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f9",
+  "theme_color": "#1f4e79",
+  "lang": "es",
+  "icons": [
+    { "src": "icono-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icono-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

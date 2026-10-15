@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1f4e79">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="EPICSSCH Campo">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icono-180.png">
+<link rel="icon" href="icono-192.png">
+<title>EPICSSCH Campo</title>
+<!--
+  Tablero de campo sin conexión de EPICSSCH (Epidemiología Regional, CSS Chiriquí).
+  Esta página NO trae ningún dato: el brote se le carga con el archivo de
+  configuración que descarga el módulo. Lo capturado se guarda CIFRADO en el
+  equipo con la clave de acceso, y sale CIFRADO con la clave pública del brote:
+  solo el módulo de la app puede abrirlo.
+  Fuente: EPICSSCH_APP/tablero_campo/ (se publica copiando esta carpeta).
+-->
+<style>
+:root{
+  --bg:#f4f6f9; --surface:#fff; --fg:#14212e; --muted:#5a6878; --line:#d5dde6;
+  --accent:#1f4e79; --accent-fg:#fff; --accent-soft:#e3edf6;
+  --ok:#1e6b45; --ok-soft:#e1f2e8; --warn:#8a5300; --warn-soft:#fbf0dc; --bad:#a3271f; --bad-soft:#fbe7e5;
+  --radius:10px; --tap:44px;
+  font-family:-apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#0f161d; --surface:#17212b; --fg:#e4eaf0; --muted:#9aa8b6; --line:#2b3947;
+  --accent:#7fb2e0; --accent-fg:#0f161d; --accent-soft:#1b2d3f;
+  --ok:#6fcf9b; --ok-soft:#14301f; --warn:#e6b25c; --warn-soft:#33270f; --bad:#f08a80; --bad-soft:#3a1714; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font-size:16px;line-height:1.45;-webkit-text-size-adjust:100%}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+header.bar{position:sticky;top:0;z-index:5;background:var(--accent);color:var(--accent-fg);padding:10px 14px;display:flex;align-items:center;gap:10px}
+header.bar b{font-size:1.02rem}
+header.bar .sp{flex:1}
+header.bar button{background:transparent;color:var(--accent-fg);border:1px solid currentColor;border-radius:8px;min-height:36px;padding:4px 10px;font:inherit;font-size:.85rem}
+nav.tabs{display:flex;gap:4px;padding:8px 10px;background:var(--surface);border-bottom:1px solid var(--line);overflow-x:auto;position:sticky;top:56px;z-index:4}
+nav.tabs button{flex:none;border:0;background:transparent;color:var(--muted);font:inherit;font-weight:600;padding:8px 12px;border-radius:8px;min-height:var(--tap)}
+nav.tabs button[aria-selected="true"]{background:var(--accent-soft);color:var(--accent)}
+main{max-width:860px;margin:0 auto;padding:14px 14px 90px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:12px}
+h1{font-size:1.3rem;margin:0 0 6px} h2{font-size:1.08rem;margin:0 0 10px} h3{font-size:.95rem;margin:12px 0 6px}
+p{margin:0 0 8px}
+.muted{color:var(--muted)} .small{font-size:.85rem}
+label.f{display:block;font-size:.85rem;font-weight:600;margin:10px 0 4px}
+input[type=text],input[type=number],input[type=date],input[type=time],input[type=password],select,textarea{
+  width:100%;min-height:var(--tap);font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg)}
+textarea{min-height:70px}
+input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:520px){.row{grid-template-columns:1fr}}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:var(--tap);padding:8px 16px;border-radius:8px;border:1px solid var(--accent);background:var(--surface);color:var(--accent);font:inherit;font-weight:600;cursor:pointer}
+.btn.pri{background:var(--accent);color:var(--accent-fg)}
+.btn.bad{border-color:var(--bad);color:var(--bad)}
+.btn[disabled]{opacity:.5}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.seg{display:flex;flex-wrap:wrap;gap:6px}
+.seg button{min-height:var(--tap);min-width:56px;padding:6px 12px;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:inherit;font-weight:600}
+.seg button[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-fg)}
+.tri{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line)}
+.tri .seg button{min-width:48px;padding:6px 8px}
+.aviso{border-radius:8px;padding:10px 12px;margin:8px 0;font-size:.9rem}
+.aviso.warn{background:var(--warn-soft);color:var(--warn)} .aviso.bad{background:var(--bad-soft);color:var(--bad)} .aviso.ok{background:var(--ok-soft);color:var(--ok)} .aviso.info{background:var(--accent-soft);color:var(--accent)}
+.lista .it{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.lista .it .tx{flex:1;min-width:0}
+.lista .it .tx b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pill{display:inline-block;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--accent-soft);color:var(--accent)}
+.pill.CASO{background:var(--bad-soft);color:var(--bad)} .pill.CONTROL{background:var(--ok-soft);color:var(--ok)}
+.pill.BORRADOR{background:var(--warn-soft);color:var(--warn)}
+.tbl{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+td.n{text-align:right;font-variant-numeric:tabular-nums}
+.fab{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:6}
+.fab .btn{box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.secnav{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}
+.secnav a{flex:none;font-size:.8rem;padding:4px 10px;border-radius:999px;border:1px solid var(--line);color:var(--muted);text-decoration:none}
+.bars{display:flex;align-items:flex-end;gap:2px;height:140px;border-bottom:1px solid var(--line);overflow-x:auto;padding-top:6px}
+.bars div{flex:none;width:18px;background:var(--accent);border-radius:3px 3px 0 0;position:relative}
+.bars div span{position:absolute;top:-16px;left:0;right:0;text-align:center;font-size:.65rem;color:var(--muted)}
+.ejes{display:flex;gap:2px;overflow-x:auto;font-size:.6rem;color:var(--muted)}
+.ejes div{flex:none;width:18px;text-align:center;writing-mode:vertical-rl;transform:rotate(180deg);height:44px}
+.bloqueo{max-width:420px;margin:40px auto}
+.oculto{display:none!important}
+</style>
+</head>
+<body>
+<header class="bar"><b>EPICSSCH Campo</b><span class="sp"></span><span id="hdr_brote" class="small"></span><button id="btn_bloquear" class="oculto" type="button">Bloquear</button></header>
+<nav class="tabs oculto" id="tabs" role="tablist">
+  <button type="button" role="tab" data-tab="lista" aria-selected="true">Entrevistas</button>
+  <button type="button" role="tab" data-tab="analisis" aria-selected="false">Análisis preliminar</button>
+  <button type="button" role="tab" data-tab="enviar" aria-selected="false">Enviar</button>
+  <button type="button" role="tab" data-tab="brotes" aria-selected="false">Brotes</button>
+</nav>
+<main id="app"><div class="card"><p>Cargando…</p></div></main>
+<div class="fab oculto" id="fab"><button class="btn pri" id="btn_nueva" type="button">+ Nueva entrevista</button></div>
+<input type="file" id="file_cfg" accept=".json,application/json" class="oculto">
+
+<script>
+"use strict";
+/* ============================================================================
+   MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
+   ========================================================================== */
+const APP_VERSION = "1.0.0";
+const CFG_SCHEMA = "epicssch.campo.config";
+const PKG_SCHEMA = "epicssch.campo.paquete";
+const CIF_SCHEMA = "epicssch.campo.cifrado";
+const RETENCION_DIAS = 30;
+const BLOQUEO_MIN = 10;
+const te = new TextEncoder(), td = new TextDecoder();
+const $ = (s, r = document) => r.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const b64 = buf => { const a = new Uint8Array(buf); let s = ""; for (let i = 0; i < a.length; i += 0x8000) s += String.fromCharCode.apply(null, a.subarray(i, i + 0x8000)); return btoa(s); };
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const r = crypto.getRandomValues(new Uint8Array(1))[0] & 15; return (c === "x" ? r : (r & 3) | 8).toString(16); }));
+const hoyISO = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const ahoraHM = () => new Date().toTimeString().slice(0, 5);
+function canon(v) {           // JSON con claves ordenadas: misma huella en cualquier equipo
+  if (Array.isArray(v)) return "[" + v.map(canon).join(",") + "]";
+  if (v && typeof v === "object") return "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
+  return JSON.stringify(v ?? null);
+}
+async function sha256hex(txt) { const h = await crypto.subtle.digest("SHA-256", te.encode(txt)); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
+
+// ── IndexedDB (con respaldo en memoria si el navegador la niega) ──────────────
+const DB = (() => {
+  let db = null, mem = { cfg: new Map(), reg: new Map() }, enMemoria = false;
+  function abrir() {
+    return new Promise(res => {
+      try {
+        const rq = indexedDB.open("epicssch_campo", 1);
+        rq.onupgradeneeded = () => { const d = rq.result; d.createObjectStore("cfg"); d.createObjectStore("reg", { keyPath: "uuid" }); };
+        rq.onsuccess = () => { db = rq.result; res(true); };
+        rq.onerror = () => { enMemoria = true; res(false); };
+      } catch (e) { enMemoria = true; res(false); }
+    });
+  }
+  function tx(store, modo, fn) {
+    if (enMemoria) return Promise.resolve(fn(null));
+    return new Promise((res, rej) => { const t = db.transaction(store, modo); const s = t.objectStore(store); const r = fn(s); t.oncomplete = () => res(r instanceof IDBRequest ? r.result : r); t.onerror = () => rej(t.error); });
+  }
+  return {
+    abrir, get enMemoria() { return enMemoria; },
+    get: (st, k) => enMemoria ? Promise.resolve(mem[st].get(k)) : tx(st, "readonly", s => s.get(k)),
+    put: (st, v, k) => enMemoria ? Promise.resolve(mem[st].set(k ?? v.uuid, v)) : tx(st, "readwrite", s => k === undefined ? s.put(v) : s.put(v, k)),
+    del: (st, k) => enMemoria ? Promise.resolve(mem[st].delete(k)) : tx(st, "readwrite", s => s.delete(k)),
+    all: st => enMemoria ? Promise.resolve([...mem[st].values()]) : tx(st, "readonly", s => s.getAll()),
+    borrarTodo: () => enMemoria ? (mem = { cfg: new Map(), reg: new Map() }, Promise.resolve()) : Promise.all([tx("cfg", "readwrite", s => s.clear()), tx("reg", "readwrite", s => s.clear())])
+  };
+})();
+
+// ── Clave de acceso: deriva la llave que cifra todo lo guardado en el equipo ──
+const Llave = { k: null, ultimo: Date.now() };
+async function derivar(pin, salt) {
+  const base = await crypto.subtle.importKey("raw", te.encode(pin), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 210000, hash: "SHA-256" }, base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+}
+async function cifrarLocal(obj) { const iv = crypto.getRandomValues(new Uint8Array(12)); const ct = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, Llave.k, te.encode(JSON.stringify(obj))); return { iv: b64(iv), ct: b64(ct) }; }
+async function descifrarLocal(c) { const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(c.iv) }, Llave.k, unb64(c.ct)); return JSON.parse(td.decode(pt)); }
+async function crearClave(pin) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  Llave.k = await derivar(pin, salt);
+  const prueba = await cifrarLocal({ ok: "epicssch" });
+  await DB.put("cfg", { salt: b64(salt), prueba }, "bloqueo");
+}
+async function abrirConClave(pin) {
+  const b = await DB.get("cfg", "bloqueo");
+  const k = await derivar(pin, unb64(b.salt));
+  Llave.k = k;
+  try { const o = await descifrarLocal(b.prueba); if (o.ok !== "epicssch") throw 0; return true; } catch (e) { Llave.k = null; return false; }
+}
+function bloquear() { Llave.k = null; Estado.regs = []; pintar(); }
+["click", "keydown", "touchstart"].forEach(ev => document.addEventListener(ev, () => { Llave.ultimo = Date.now(); }, { passive: true }));
+setInterval(() => { if (Llave.k && Date.now() - Llave.ultimo > BLOQUEO_MIN * 60000) bloquear(); }, 30000);
+
+// ── Registros: metadatos a la vista, contenido cifrado ────────────────────────
+async function guardarReg(r) {
+  r.actualizado = new Date().toISOString();
+  const c = await cifrarLocal(r);
+  await DB.put("reg", { uuid: r.uuid, codbrote: r.codbrote, estado: r.estado, rol: r.rol, actualizado: r.actualizado, exportado_en: r.exportado_en || null, ...c });
+}
+async function leerRegs() {
+  const filas = await DB.all("reg"); const out = [];
+  for (const f of filas) { try { const r = await descifrarLocal(f); r.exportado_en = f.exportado_en; out.push(r); } catch (e) { /* de otra clave: no se puede leer */ } }
+  return out.sort((a, b) => (b.actualizado || "").localeCompare(a.actualizado || ""));
+}
+async function limpiarViejos() {     // T3: lo ya exportado se borra a los 30 días
+  const filas = await DB.all("reg"); const lim = Date.now() - RETENCION_DIAS * 86400000; let n = 0;
+  for (const f of filas) if (f.exportado_en && Date.parse(f.exportado_en) < lim) { await DB.del("reg", f.uuid); n++; }
+  return n;
+}
+
+// ── Exportación cifrada para el módulo ────────────────────────────────────────
+// 64 bytes al azar por envío: los primeros 32 cifran (AES-GCM) y los otros 32
+// firman (HMAC-SHA256 sobre iv + texto cifrado). Los 64 viajan envueltos con la
+// clave pública RSA del brote (RSA-OAEP, SHA-1, lo que lee openssl::rsa_decrypt):
+// solo el servidor, que guarda la privada, los abre. La firma HMAC existe porque
+// openssl de R no verifica la etiqueta de GCM; sin ella, alguien podría alterar
+// el archivo sin la llave y no se notaría.
+async function exportarCifrado(cfg, regs) {
+  const paquete = { schema_id: PKG_SCHEMA + "." + cfg.tipo.toLowerCase(), schema_version: APP_VERSION, codbrote: cfg.codbrote,
+    exported_at: new Date().toISOString(), device_id: Estado.device, total: regs.length, registros: regs };
+  paquete.sha256 = await sha256hex(canon(paquete));
+  const pub = await crypto.subtle.importKey("spki", unb64(cfg.clave.spki), { name: "RSA-OAEP", hash: "SHA-1" }, false, ["encrypt"]);
+  const raw = crypto.getRandomValues(new Uint8Array(64));
+  const k = await crypto.subtle.importKey("raw", raw.slice(0, 32), "AES-GCM", false, ["encrypt"]);
+  const km = await crypto.subtle.importKey("raw", raw.slice(32), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, k, te.encode(JSON.stringify(paquete))));
+  const firmado = new Uint8Array(iv.length + ct.length); firmado.set(iv); firmado.set(ct, iv.length);
+  const mac = await crypto.subtle.sign("HMAC", km, firmado);
+  const ek = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pub, raw);
+  return { schema_id: CIF_SCHEMA, schema_version: APP_VERSION, tipo: cfg.tipo, codbrote: cfg.codbrote, kid: cfg.clave.kid,
+    total: regs.length, creado: paquete.exported_at, ek: b64(ek), iv: b64(iv), ct: b64(ct), mac: b64(mac) };
+}
+async function entregarArchivo(nombre, texto) {
+  const archivo = new File([texto], nombre, { type: "application/json" });
+  // En el celular, la hoja de compartir lleva el archivo directo a WhatsApp o al correo.
+  if (navigator.canShare && navigator.canShare({ files: [archivo] })) {
+    try { await navigator.share({ files: [archivo], title: nombre }); return "compartido"; }
+    catch (e) { if (e && e.name === "AbortError") return "cancelado"; }
+  }
+  const url = URL.createObjectURL(archivo); const a = document.createElement("a");
+  a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return "descargado";
+}
+
+/* ============================================================================
+   ESTADO Y PANTALLAS
+   ========================================================================== */
+const Estado = { tab: "lista", cfgs: [], activo: null, regs: [], editando: null, device: null, entrevistador: "", aviso: null };
+const cfgActiva = () => Estado.cfgs.find(c => c.codbrote === Estado.activo) || null;
+
+async function iniciar() {
+  if (!window.isSecureContext || !crypto.subtle) {
+    $("#app").innerHTML = `<div class="card"><h1>Abra el tablero desde su dirección segura</h1><p>Este equipo no permite cifrar en esta página. Ábrala desde la dirección https que le dio Epidemiología.</p></div>`;
+    return;
+  }
+  await DB.abrir();
+  if (navigator.storage && navigator.storage.persist) { try { await navigator.storage.persist(); } catch (e) {} }
+  if ("serviceWorker" in navigator && location.protocol === "https:") { try { await navigator.serviceWorker.register("sw.js"); } catch (e) {} }
+  Estado.device = (await DB.get("cfg", "device")) || uuid(); await DB.put("cfg", Estado.device, "device");
+  Estado.cfgs = (await DB.get("cfg", "brotes")) || [];
+  Estado.activo = (await DB.get("cfg", "activo")) || (Estado.cfgs[0] && Estado.cfgs[0].codbrote) || null;
+  Estado.entrevistador = (await DB.get("cfg", "entrevistador")) || "";
+  pintar();
+}
+
+function avisoInstalar() {
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const instalado = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+  if (instalado || location.protocol !== "https:") return "";
+  return ios
+    ? `<div class="aviso warn">En iPhone o iPad: toque <b>Compartir</b> y luego <b>Agregar a pantalla de inicio</b>. Así funciona sin internet y Safari no borra lo guardado.</div>`
+    : `<div class="aviso info">Instálelo desde el menú del navegador (<b>Instalar aplicación</b> o <b>Agregar a la pantalla principal</b>) para usarlo sin internet.</div>`;
+}
+
+async function pintar() {
+  const bloq = await DB.get("cfg", "bloqueo");
+  const desbloqueado = !!Llave.k;
+  $("#tabs").classList.toggle("oculto", !desbloqueado);
+  $("#btn_bloquear").classList.toggle("oculto", !desbloqueado);
+  $("#fab").classList.toggle("oculto", !desbloqueado || !cfgActiva() || Estado.editando !== null || Estado.tab !== "lista");
+  const c = cfgActiva(); $("#hdr_brote").textContent = c ? c.codbrote : "";
+  if (!bloq) return pantallaCrearClave();
+  if (!desbloqueado) return pantallaAbrir();
+  if (Estado.editando) Estado.tab = "lista";
+  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === Estado.tab ? "true" : "false"));
+  if (Estado.editando) return pantallaEntrevista();
+  if (!c && Estado.tab !== "brotes") Estado.tab = "brotes";
+  ({ lista: pantallaLista, analisis: pantallaAnalisis, enviar: pantallaEnviar, brotes: pantallaBrotes })[Estado.tab]();
+}
+
+function pantallaCrearClave() {
+  $("#app").innerHTML = `<div class="bloqueo card">
+    <h1>Clave de acceso de este equipo</h1>
+    <p class="muted">Todo lo que se capture queda cifrado con esta clave. Si la olvida, lo guardado en el equipo no se puede recuperar.</p>
+    ${avisoInstalar()}
+    <label class="f" for="pin1">Clave (al menos 6 caracteres)</label><input type="password" id="pin1" autocomplete="new-password" inputmode="text">
+    <label class="f" for="pin2">Repítala</label><input type="password" id="pin2" autocomplete="new-password">
+    <div id="msg"></div>
+    <div class="btns"><button class="btn pri" id="btn_crear" type="button">Crear la clave</button></div></div>`;
+  $("#btn_crear").onclick = async () => {
+    const a = $("#pin1").value, b = $("#pin2").value;
+    if (a.length < 6) return ($("#msg").innerHTML = `<div class="aviso bad">La clave debe tener al menos 6 caracteres.</div>`);
+    if (a !== b) return ($("#msg").innerHTML = `<div class="aviso bad">Las dos claves no coinciden.</div>`);
+    await crearClave(a); Estado.regs = []; pintar();
+  };
+}
+
+function pantallaAbrir() {
+  $("#app").innerHTML = `<div class="bloqueo card">
+    <h1>Tablero bloqueado</h1>
+    ${DB.enMemoria ? `<div class="aviso bad">Este navegador no deja guardar: lo capturado se pierde al cerrar. Use otro navegador o salga del modo privado.</div>` : ""}
+    <label class="f" for="pin">Clave de acceso</label><input type="password" id="pin" autocomplete="current-password">
+    <div id="msg"></div>
+    <div class="btns"><button class="btn pri" id="btn_abrir" type="button">Abrir</button></div>
+    <p class="small muted" style="margin-top:16px">¿Olvidó la clave? Solo se puede <a href="#" id="lnk_borrar">borrar todo lo guardado en este equipo</a> y empezar de nuevo.</p></div>`;
+  const ir = async () => {
+    if (await abrirConClave($("#pin").value)) { const n = await limpiarViejos(); Estado.regs = await leerRegs(); Estado.aviso = n ? `Se borraron ${n} entrevistas enviadas hace más de ${RETENCION_DIAS} días.` : null; pintar(); }
+    else $("#msg").innerHTML = `<div class="aviso bad">Clave incorrecta.</div>`;
+  };
+  $("#btn_abrir").onclick = ir; $("#pin").onkeydown = e => { if (e.key === "Enter") ir(); };
+  $("#lnk_borrar").onclick = e => { e.preventDefault(); confirmar("Se borran todas las entrevistas y los brotes de este equipo. No se puede deshacer.", "Borrar todo", async () => { await DB.borrarTodo(); location.reload(); }); };
+}
+
+function confirmar(texto, boton, fn) {      // confirmación dentro de la página
+  const d = document.createElement("div"); d.className = "card"; d.style.cssText = "position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:9;max-width:520px;margin:0 auto;box-shadow:0 8px 30px rgba(0,0,0,.25)";
+  d.innerHTML = `<p>${esc(texto)}</p><div class="btns"><button class="btn bad" type="button">${esc(boton)}</button><button class="btn" type="button">Cancelar</button></div>`;
+  document.body.appendChild(d); const [si, no] = d.querySelectorAll("button");
+  si.onclick = async () => { d.remove(); await fn(); }; no.onclick = () => d.remove();
+}
+
+/* ── Brotes cargados en el equipo ─────────────────────────────────────────── */
+function pantallaBrotes() {
+  const filas = Estado.cfgs.map(c => `<div class="it"><div class="tx"><b>${esc(c.codbrote)}</b><span class="small muted">${esc(c.nombre || c.evento)} · ${esc(c.evento)}</span></div>
+     ${c.codbrote === Estado.activo ? `<span class="pill">Activo</span>` : `<button class="btn" data-act="${esc(c.codbrote)}" type="button">Usar</button>`}</div>`).join("");
+  $("#app").innerHTML = `${avisoInstalar()}<div class="card"><h2>Brotes en este equipo</h2>
+    <p class="muted small">Cargue el archivo de configuración que se descarga en el módulo de Gestión de Brotes (pestaña Tablero de campo). Le llega por WhatsApp o correo.</p>
+    <div class="lista">${filas || `<p class="muted">Todavía no hay ningún brote cargado.</p>`}</div>
+    <div id="msg"></div><div class="btns"><button class="btn pri" id="btn_cargar" type="button">Cargar archivo del brote</button></div></div>
+    <div class="card"><h2>Entrevistador</h2><label class="f" for="entrev">Nombre de quien entrevista en este equipo</label><input type="text" id="entrev" value="${esc(Estado.entrevistador)}"></div>
+    <p class="small muted">EPICSSCH Campo ${APP_VERSION}</p>`;
+  $("#app").querySelectorAll("[data-act]").forEach(b => b.onclick = async () => { Estado.activo = b.dataset.act; await DB.put("cfg", Estado.activo, "activo"); Estado.tab = "lista"; pintar(); });
+  $("#btn_cargar").onclick = () => $("#file_cfg").click();
+  $("#entrev").onchange = async e => { Estado.entrevistador = e.target.value.trim(); await DB.put("cfg", Estado.entrevistador, "entrevistador"); };
+}
+$("#file_cfg").onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  try {
+    const c = JSON.parse(await f.text());
+    if (c.schema_id !== CFG_SCHEMA) throw new Error("Ese archivo no es la configuración de un brote de EPICSSCH.");
+    if (!c.codbrote || !c.clave || !c.clave.spki) throw new Error("Al archivo le falta el código del brote o su clave.");
+    await crypto.subtle.importKey("spki", unb64(c.clave.spki), { name: "RSA-OAEP", hash: "SHA-1" }, false, ["encrypt"]);
+    const previo = Estado.cfgs.find(x => x.codbrote === c.codbrote);
+    Estado.cfgs = Estado.cfgs.filter(x => x.codbrote !== c.codbrote).concat([c]);
+    Estado.activo = c.codbrote;
+    await DB.put("cfg", Estado.cfgs, "brotes"); await DB.put("cfg", Estado.activo, "activo");
+    Estado.tab = "lista"; Estado.aviso = `Brote ${c.codbrote} cargado${previo ? " (actualizado)" : ""}.`; pintar();
+  } catch (err) { const m = $("#msg"); if (m) m.innerHTML = `<div class="aviso bad">${esc(err.message || "No se pudo leer el archivo.")}</div>`; }
+};
+
+/* ── Lista de entrevistas ─────────────────────────────────────────────────── */
+function rotRol(r) { return r.rol === "CASO" ? "Caso" : r.rol === "CONTROL" ? "Control" : (r.enfermo === true ? "Cohorte · enfermó" : r.enfermo === false ? "Cohorte · no enfermó" : "Cohorte"); }
+function pantallaLista() {
+  const c = cfgActiva(); const regs = Estado.regs.filter(r => r.codbrote === c.codbrote);
+  const pend = regs.filter(r => !r.exportado_en).length;
+  const filas = regs.map(r => `<div class="it" data-ed="${r.uuid}" role="button" tabindex="0">
+      <div class="tx"><b>${esc(r.persona.nombre || "(sin nombre)")}</b><span class="small muted">${esc(rotRol(r))} · ${esc((r.actualizado || "").slice(0, 16).replace("T", " "))}</span></div>
+      ${r.estado === "BORRADOR" ? `<span class="pill BORRADOR">Borrador</span>` : ""}<span class="pill ${esc(r.rol)}">${esc(r.rol === "COHORTE" ? "Cohorte" : rotRol(r))}</span>
+      ${r.exportado_en ? `<span class="pill">Enviada</span>` : ""}</div>`).join("");
+  $("#app").innerHTML = `${Estado.aviso ? `<div class="aviso ok">${esc(Estado.aviso)}</div>` : ""}${avisoInstalar()}
+    <div class="card"><h1>${esc(c.codbrote)}</h1><p class="muted">${esc(c.nombre || "")} · ${esc(c.evento)}</p>
+      ${c.def_sospechoso ? `<p class="small"><b>Caso sospechoso:</b> ${esc(c.def_sospechoso)}</p>` : ""}
+      ${c.def_confirmado ? `<p class="small"><b>Caso confirmado:</b> ${esc(c.def_confirmado)}</p>` : ""}
+      <p class="small muted">${regs.length} entrevistas · ${pend} sin enviar</p></div>
+    <div class="card lista">${filas || `<p class="muted">Todavía no hay entrevistas. Toque <b>Nueva entrevista</b>.</p>`}</div>`;
+  Estado.aviso = null;
+  $("#app").querySelectorAll("[data-ed]").forEach(el => { const ab = () => { Estado.editando = structuredClone(Estado.regs.find(r => r.uuid === el.dataset.ed)); pintar(); window.scrollTo(0, 0); }; el.onclick = ab; el.onkeydown = e => { if (e.key === "Enter") ab(); }; });
+}
+$("#btn_nueva").onclick = () => {
+  const c = cfgActiva();
+  Estado.editando = { uuid: uuid(), codbrote: c.codbrote, estado: "BORRADOR", rol: null, enfermo: null, entrevistador: Estado.entrevistador,
+    fecha_entrevista: hoyISO(), hora_entrevista: ahoraHM(), creado: new Date().toISOString(),
+    persona: {}, lugar: {}, tiempo: {}, clinica: { sintomas: {} }, exposiciones: {}, laboratorio: {}, observaciones: "" };
+  pintar(); window.scrollTo(0, 0);
+};
+$("#btn_bloquear").onclick = bloquear;
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => { Estado.tab = b.dataset.tab; Estado.editando = null; pintar(); });
+
+/* ============================================================================
+   CUESTIONARIO DE BROTE
+   ========================================================================== */
+function seg(nombre, opciones, valor) {
+  return `<div class="seg" data-seg="${nombre}">${opciones.map(([v, t]) => `<button type="button" data-v="${esc(v)}" aria-pressed="${String(valor) === String(v)}">${esc(t)}</button>`).join("")}</div>`;
+}
+const SNN = [["S", "Sí"], ["N", "No"], ["NS", "No sabe"]];
+function seccionesExposicion(c) {
+  const secs = (c.exposiciones || []).map(s => ({ seccion: s.seccion, items: [...s.items] }));
+  return secs;
+}
+function edadDesde(fnac, ref) { if (!fnac) return null; const a = new Date(fnac), b = new Date(ref || hoyISO()); let e = b.getFullYear() - a.getFullYear(); if (b.getMonth() < a.getMonth() || (b.getMonth() === a.getMonth() && b.getDate() < a.getDate())) e--; return e >= 0 && e < 120 ? e : null; }
+const enfermo = r => r.rol === "CASO" || (r.rol === "COHORTE" && r.enfermo === true);
+
+function validar(r) {
+  const e = [], a = [];
+  if (!r.rol) e.push("Indique si es caso, control o miembro de la cohorte.");
+  if (r.rol === "COHORTE" && r.enfermo === null) e.push("En la cohorte, indique si enfermó.");
+  if (!r.persona.nombre) e.push("Falta el nombre.");
+  if (!r.persona.sexo) e.push("Falta el sexo.");
+  if (r.persona.edad == null || r.persona.edad === "") e.push("Falta la edad o la fecha de nacimiento.");
+  if (enfermo(r) && !r.tiempo.fis) e.push("Falta la fecha de inicio de síntomas.");
+  if (r.persona.cedula && !/^(\d{1,2}|PE|E|N|\d{1,2}(AV|PI))-\d{1,4}-\d{1,6}$/i.test(r.persona.cedula)) a.push("La cédula no tiene el formato habitual (por ejemplo 4-123-456).");
+  if (!r.persona.cedula) a.push("Sin cédula no se puede enlazar con la notificación al cargar.");
+  if (r.rol === "CONTROL") { const s = Object.values(r.clinica.sintomas || {}).filter(v => v === "S").length; if (s >= 2) a.push(`Un control con ${s} síntomas del brote: revise si no es un caso.`); }
+  if (r.tiempo.fis && r.tiempo.fexp && r.tiempo.fexp > r.tiempo.fis) a.push("La exposición quedó después del inicio de síntomas.");
+  if (r.tiempo.fis && r.tiempo.fis > hoyISO()) e.push("La fecha de inicio de síntomas es futura.");
+  return { e, a };
+}
+
+function pantallaEntrevista() {
+  const c = cfgActiva(), r = Estado.editando, en = enfermo(r);
+  const geo = c.geografia || [];
+  const distritos = [...new Set(geo.map(g => g.d))].sort();
+  const corrs = geo.filter(g => g.d === r.lugar.distrito);
+  const v = validar(r);
+  const secsExp = seccionesExposicion(c);
+  $("#app").innerHTML = `
+  <div class="card"><div class="btns" style="margin-top:0"><button class="btn" id="btn_volver" type="button">← Entrevistas</button></div>
+    <h1>${r.estado === "COMPLETA" ? "Entrevista" : "Nueva entrevista"}</h1>
+    <div class="secnav"><a href="#s_control">Control</a><a href="#s_persona">Persona</a><a href="#s_lugar">Lugar</a><a href="#s_tiempo">Tiempo</a>${en ? `<a href="#s_clinica">Clínica</a>` : ""}<a href="#s_exp">Exposiciones</a><a href="#s_lab">Laboratorio</a></div></div>
+
+  <div class="card" id="s_control"><h2>Control</h2>
+    <label class="f">Esta persona es</label>${seg("rol", [["CASO", "Caso"], ["CONTROL", "Control"], ["COHORTE", "Miembro de la cohorte"]], r.rol)}
+    ${r.rol === "COHORTE" ? `<label class="f">¿Enfermó?</label>${seg("enfermo", [["true", "Sí"], ["false", "No"]], r.enfermo)}` : ""}
+    ${r.rol === "CASO" && (c.def_sospechoso || c.def_confirmado) ? `<label class="f">¿Cumple la definición de caso?</label>${seg("cumple", [["SOSPECHOSO", "Sospechoso"], ["CONFIRMADO", "Confirmado"], ["NO", "No la cumple"]], r.clinica.cumple)}` : ""}
+    <div class="row"><div><label class="f" for="f_fent">Fecha de la entrevista</label><input type="date" id="f_fent" data-k="fecha_entrevista" value="${esc(r.fecha_entrevista)}"></div>
+    <div><label class="f" for="f_entr">Entrevistador</label><input type="text" id="f_entr" data-k="entrevistador" value="${esc(r.entrevistador)}"></div></div></div>
+
+  <div class="card" id="s_persona"><h2>Persona</h2>
+    <label class="f" for="p_nom">Nombre completo</label><input type="text" id="p_nom" data-k="persona.nombre" value="${esc(r.persona.nombre)}" autocomplete="off">
+    <div class="row"><div><label class="f" for="p_ced">Cédula</label><input type="text" id="p_ced" data-k="persona.cedula" value="${esc(r.persona.cedula)}" autocomplete="off" placeholder="4-123-456"></div>
+    <div><label class="f">Sexo</label>${seg("sexo", [["M", "Hombre"], ["F", "Mujer"]], r.persona.sexo)}</div></div>
+    <div class="row"><div><label class="f" for="p_fnac">Fecha de nacimiento</label><input type="date" id="p_fnac" data-k="persona.fnac" value="${esc(r.persona.fnac)}"></div>
+    <div><label class="f" for="p_edad">Edad (años)</label><input type="number" id="p_edad" data-k="persona.edad" inputmode="numeric" min="0" max="119" value="${esc(r.persona.edad)}"></div></div>
+    <label class="f" for="p_ocu">Ocupación o grado escolar</label><input type="text" id="p_ocu" data-k="persona.ocupacion" value="${esc(r.persona.ocupacion)}">
+    ${r.persona.sexo === "F" && (r.persona.edad >= 10 && r.persona.edad <= 54) ? `<label class="f">¿Embarazada?</label>${seg("embarazo", SNN, r.persona.embarazo)}` : ""}</div>
+
+  <div class="card" id="s_lugar"><h2>Lugar</h2>
+    <div class="row"><div><label class="f" for="l_dis">Distrito</label><select id="l_dis" data-k="lugar.distrito"><option value="">Elija</option>${distritos.map(d => `<option ${d === r.lugar.distrito ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
+    <div><label class="f" for="l_cor">Corregimiento</label><select id="l_cor" data-k="lugar.cod_geo"><option value="">Elija</option>${corrs.map(g => `<option value="${esc(g.cod)}" ${g.cod === r.lugar.cod_geo ? "selected" : ""}>${esc(g.c)}</option>`).join("")}</select></div></div>
+    <label class="f" for="l_loc">Localidad o barriada</label><input type="text" id="l_loc" data-k="lugar.localidad" value="${esc(r.lugar.localidad)}">
+    <label class="f" for="l_ev">Lugar del evento común (escuela, fiesta, comedor)</label><input type="text" id="l_ev" data-k="lugar.lugar_evento" value="${esc(r.lugar.lugar_evento)}"></div>
+
+  <div class="card" id="s_tiempo"><h2>Tiempo</h2>
+    ${en ? `<div class="row"><div><label class="f" for="t_fis">Inicio de síntomas: fecha</label><input type="date" id="t_fis" data-k="tiempo.fis" value="${esc(r.tiempo.fis)}"></div>
+    <div><label class="f" for="t_his">Hora</label><input type="time" id="t_his" data-k="tiempo.his" value="${esc(r.tiempo.his)}"></div></div>` : ""}
+    <div class="row"><div><label class="f" for="t_fexp">Exposición sospechosa: fecha</label><input type="date" id="t_fexp" data-k="tiempo.fexp" value="${esc(r.tiempo.fexp)}"></div>
+    <div><label class="f" for="t_hexp">Hora</label><input type="time" id="t_hexp" data-k="tiempo.hexp" value="${esc(r.tiempo.hexp)}"></div></div>
+    ${en ? `<label class="f" for="t_fat">Fecha de atención médica</label><input type="date" id="t_fat" data-k="tiempo.fatencion" value="${esc(r.tiempo.fatencion)}">` : ""}
+    ${incubacionDe(r) != null ? `<p class="small muted" style="margin-top:8px">Período de incubación de esta persona: ${incubacionDe(r)} horas.</p>` : ""}</div>
+
+  ${en ? `<div class="card" id="s_clinica"><h2>Signos y síntomas</h2>
+    ${(c.sintomas || []).map((s, i) => `<div class="tri"><span>${esc(s)}</span>${seg("sin:" + i, SNN, r.clinica.sintomas[s])}</div>`).join("")}
+    <div class="row"><div><label class="f">¿Fue hospitalizado?</label>${seg("hosp", [["S", "Sí"], ["N", "No"]], r.clinica.hospitalizado)}</div>
+    <div><label class="f" for="c_des">Desenlace</label><select id="c_des" data-k="clinica.desenlace"><option value="">Elija</option>${["Recuperado", "En tratamiento", "Falleció"].map(x => `<option ${x === r.clinica.desenlace ? "selected" : ""}>${x}</option>`).join("")}</select></div></div></div>` : ""}
+
+  <div class="card" id="s_exp"><h2>Exposiciones</h2><p class="small muted">Pregunte por el período de exposición del brote.</p>
+    ${secsExp.map((s, si) => `<h3>${esc(s.seccion)}</h3>${s.items.map((it, ii) => `<div class="tri"><span>${esc(it)}</span>${seg("exp:" + si + ":" + ii, SNN, (r.exposiciones[s.seccion] || {})[it])}</div>`).join("")}`).join("")}
+    <p class="small muted">Las exposiciones las define el investigador en el módulo de Gestión de Brotes. Si falta una, avise a Epidemiología para que la agregue y le mande la configuración actualizada.</p></div>
+
+  <div class="card" id="s_lab"><h2>Laboratorio</h2>
+    <label class="f">¿Se tomó muestra?</label>${seg("muestra", [["S", "Sí"], ["N", "No"]], r.laboratorio.muestra)}
+    ${r.laboratorio.muestra === "S" ? `<div class="row"><div><label class="f" for="lb_tipo">Tipo de muestra</label><select id="lb_tipo" data-k="laboratorio.tipo"><option value="">Elija</option>${(c.laboratorios || []).map(x => `<option ${x === r.laboratorio.tipo ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></div>
+      <div><label class="f" for="lb_f">Fecha de la muestra</label><input type="date" id="lb_f" data-k="laboratorio.fecha" value="${esc(r.laboratorio.fecha)}"></div></div>` : ""}
+    <label class="f" for="obs">Observaciones</label><textarea id="obs" data-k="observaciones">${esc(r.observaciones)}</textarea></div>
+
+  <div class="card">${v.e.map(x => `<div class="aviso bad">${esc(x)}</div>`).join("")}${v.a.map(x => `<div class="aviso warn">${esc(x)}</div>`).join("")}
+    <div class="btns"><button class="btn pri" id="btn_completa" type="button" ${v.e.length ? "disabled" : ""}>Guardar como completa</button>
+    <button class="btn" id="btn_borrador" type="button">Guardar borrador</button>
+    ${Estado.regs.some(x => x.uuid === r.uuid) ? `<button class="btn bad" id="btn_eliminar" type="button">Eliminar</button>` : ""}</div>
+    <p class="small muted">Se guarda solo en este equipo, cifrado. Para que llegue al módulo hay que enviarlo desde la pestaña Enviar.</p></div>`;
+  enlazarEntrevista();
+}
+
+function incubacionDe(r) {
+  if (!r.tiempo.fis || !r.tiempo.fexp) return null;
+  const a = Date.parse(r.tiempo.fexp + "T" + (r.tiempo.hexp || "12:00")), b = Date.parse(r.tiempo.fis + "T" + (r.tiempo.his || "12:00"));
+  const h = (b - a) / 3600000; return h >= 0 ? Math.round(h * 10) / 10 : null;
+}
+function setRuta(o, ruta, val) { const p = ruta.split("."); let x = o; for (let i = 0; i < p.length - 1; i++) x = x[p[i]] = x[p[i]] || {}; x[p[p.length - 1]] = val; }
+
+function enlazarEntrevista() {
+  const r = Estado.editando, c = cfgActiva(), secsExp = seccionesExposicion(c);
+  $("#btn_volver").onclick = () => { Estado.editando = null; pintar(); };
+  $("#app").querySelectorAll("[data-k]").forEach(el => el.onchange = () => {
+    let val = el.value; const k = el.dataset.k;
+    if (k === "persona.edad") val = val === "" ? null : Number(val);
+    setRuta(r, k, val);
+    if (k === "persona.fnac") r.persona.edad = edadDesde(val, r.fecha_entrevista);
+    if (k === "lugar.distrito") { r.lugar.cod_geo = ""; r.lugar.corregimiento = ""; }
+    if (k === "lugar.cod_geo") { const g = (c.geografia || []).find(z => z.cod === val); r.lugar.corregimiento = g ? g.c : ""; }
+    if (["persona.fnac", "persona.edad", "lugar.distrito", "tiempo.fis", "tiempo.fexp", "tiempo.his", "tiempo.hexp", "persona.cedula", "persona.nombre", "fecha_entrevista"].includes(k)) redibujar();
+  });
+  $("#app").querySelectorAll("[data-seg]").forEach(g => g.querySelectorAll("button").forEach(b => b.onclick = () => {
+    const n = g.dataset.seg, v = b.dataset.v, cur = b.getAttribute("aria-pressed") === "true";
+    const val = cur ? null : v;                         // tocar de nuevo deja la respuesta en blanco
+    if (n === "rol") { r.rol = val; if (val !== "COHORTE") r.enfermo = null; }
+    else if (n === "enfermo") r.enfermo = val === null ? null : val === "true";
+    else if (n === "cumple") r.clinica.cumple = val;
+    else if (n === "sexo") r.persona.sexo = val;
+    else if (n === "embarazo") r.persona.embarazo = val;
+    else if (n === "hosp") r.clinica.hospitalizado = val;
+    else if (n === "muestra") r.laboratorio.muestra = val;
+    else if (n.startsWith("sin:")) { const s = c.sintomas[+n.slice(4)]; if (val) r.clinica.sintomas[s] = val; else delete r.clinica.sintomas[s]; }
+    else if (n.startsWith("exp:")) { const [, si, ii] = n.split(":"); const s = secsExp[+si]; const it = s.items[+ii]; r.exposiciones[s.seccion] = r.exposiciones[s.seccion] || {}; if (val) r.exposiciones[s.seccion][it] = val; else delete r.exposiciones[s.seccion][it]; }
+    if (["rol", "enfermo", "sexo", "muestra"].includes(n)) redibujar();
+    else g.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.v === val)));
+    refrescarValidacion();
+  }));
+  const guardar = async estado => {
+    r.estado = estado; await guardarReg(r); Estado.regs = await leerRegs();
+    Estado.editando = null; Estado.aviso = estado === "COMPLETA" ? "Entrevista guardada." : "Borrador guardado."; pintar(); window.scrollTo(0, 0);
+  };
+  $("#btn_completa").onclick = () => guardar("COMPLETA");
+  $("#btn_borrador").onclick = () => guardar("BORRADOR");
+  const el = $("#btn_eliminar");
+  if (el) el.onclick = () => confirmar("Se elimina esta entrevista de este equipo.", "Eliminar", async () => { await DB.del("reg", r.uuid); Estado.regs = await leerRegs(); Estado.editando = null; pintar(); });
+}
+function redibujar() { const y = window.scrollY; pantallaEntrevista(); window.scrollTo(0, y); }
+function refrescarValidacion() { const v = validar(Estado.editando); const b = $("#btn_completa"); if (b) b.disabled = v.e.length > 0; }
+
+/* ============================================================================
+   ANÁLISIS PRELIMINAR (casos y controles, o cohorte)
+   ========================================================================== */
+function orWoolf(a, b, c, d) {
+  let A = a, B = b, C = c, D = d; if ([a, b, c, d].includes(0)) { A += .5; B += .5; C += .5; D += .5; }   // corrección de Haldane
+  const or = (A * D) / (B * C), se = Math.sqrt(1 / A + 1 / B + 1 / C + 1 / D);
+  return { or, li: Math.exp(Math.log(or) - 1.96 * se), ls: Math.exp(Math.log(or) + 1.96 * se) };
+}
+function rrIC(a, b, c, d) {   // a enfermos expuestos, b sanos expuestos, c enfermos no expuestos, d sanos no expuestos
+  if (a + b === 0 || c + d === 0) return null;
+  let A = a, C = c; if (a === 0 || c === 0) { A += .5; C += .5; }
+  const r1 = A / (a + b), r0 = C / (c + d), rr = r1 / r0, se = Math.sqrt(1 / A - 1 / (a + b) + 1 / C - 1 / (c + d));
+  return { ar1: a / (a + b), ar0: c / (c + d), rr, li: Math.exp(Math.log(rr) - 1.96 * se), ls: Math.exp(Math.log(rr) + 1.96 * se) };
+}
+const f2 = x => (x == null || !isFinite(x)) ? "—" : x.toFixed(2);
+const pct = (n, d) => d ? Math.round(100 * n / d) + " %" : "—";
+function mediana(v) { const s = [...v].sort((a, b) => a - b), m = Math.floor(s.length / 2); return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; }
+
+function pantallaAnalisis() {
+  const c = cfgActiva(), regs = Estado.regs.filter(r => r.codbrote === c.codbrote && r.estado === "COMPLETA");
+  const casos = regs.filter(r => r.rol === "CASO"), ctrl = regs.filter(r => r.rol === "CONTROL"), coh = regs.filter(r => r.rol === "COHORTE");
+  const enf = regs.filter(enfermo);
+  const cohorte = coh.length > 0 && casos.length + ctrl.length === 0;
+  // Síntomas entre los enfermos
+  const sint = (c.sintomas || []).map(s => ({ s, n: enf.filter(r => r.clinica.sintomas[s] === "S").length, d: enf.filter(r => r.clinica.sintomas[s] === "S" || r.clinica.sintomas[s] === "N").length })).sort((a, b) => b.n - a.n);
+  // Curva por fecha de inicio
+  const fechas = enf.map(r => r.tiempo.fis).filter(Boolean).sort();
+  let curva = "";
+  if (fechas.length) {
+    const d0 = new Date(fechas[0]), d1 = new Date(fechas[fechas.length - 1]); const dias = [];
+    for (let d = new Date(d0); d <= d1 && dias.length < 60; d.setDate(d.getDate() + 1)) dias.push(d.toISOString().slice(0, 10));
+    const cnt = dias.map(x => fechas.filter(f => f === x).length), mx = Math.max(...cnt, 1);
+    curva = `<div class="bars">${cnt.map(n => `<div style="height:${Math.round(120 * n / mx)}px" title="${n}"><span>${n || ""}</span></div>`).join("")}</div><div class="ejes">${dias.map(x => `<div>${x.slice(8, 10)}/${x.slice(5, 7)}</div>`).join("")}</div>`;
+  }
+  const inc = enf.map(incubacionDe).filter(x => x != null);
+  // Exposiciones
+  const secs = seccionesExposicion(c); const filasExp = [];
+  for (const s of secs) for (const it of s.items) {
+    const val = r => (r.exposiciones[s.seccion] || {})[it];
+    if (cohorte) {
+      const a = coh.filter(r => r.enfermo && val(r) === "S").length, b = coh.filter(r => r.enfermo === false && val(r) === "S").length;
+      const cc = coh.filter(r => r.enfermo && val(r) === "N").length, d = coh.filter(r => r.enfermo === false && val(r) === "N").length;
+      if (a + b + cc + d === 0) continue; const x = rrIC(a, b, cc, d);
+      filasExp.push({ it, s: s.seccion, txt: `<td class="n">${a}/${a + b}</td><td class="n">${pct(a, a + b)}</td><td class="n">${cc}/${cc + d}</td><td class="n">${pct(cc, cc + d)}</td><td class="n"><b>${x ? f2(x.rr) : "—"}</b></td><td class="n">${x ? f2(x.li) + "–" + f2(x.ls) : "—"}</td>`, orden: x ? x.rr : 0 });
+    } else {
+      const a = casos.filter(r => val(r) === "S").length, b = ctrl.filter(r => val(r) === "S").length;
+      const cc = casos.filter(r => val(r) === "N").length, d = ctrl.filter(r => val(r) === "N").length;
+      if (a + b + cc + d === 0) continue; const x = (a + cc) && (b + d) ? orWoolf(a, b, cc, d) : null;
+      filasExp.push({ it, s: s.seccion, txt: `<td class="n">${a}/${a + cc}</td><td class="n">${pct(a, a + cc)}</td><td class="n">${b}/${b + d}</td><td class="n">${pct(b, b + d)}</td><td class="n"><b>${x ? f2(x.or) : "—"}</b></td><td class="n">${x ? f2(x.li) + "–" + f2(x.ls) : "—"}</td>`, orden: x ? x.or : 0 });
+    }
+  }
+  filasExp.sort((a, b) => b.orden - a.orden);
+  $("#app").innerHTML = `<div class="aviso warn">Preliminar, con las entrevistas completas de este equipo. El análisis oficial es el del módulo, con todas las entrevistas cargadas.</div>
+  <div class="card"><h2>Resumen</h2><p>${casos.length} casos · ${ctrl.length} controles · ${coh.length} miembros de la cohorte (${coh.filter(r => r.enfermo).length} enfermaron)</p>
+    ${inc.length ? `<p>Período de incubación (${inc.length} con fecha y hora de exposición e inicio): mínimo ${Math.min(...inc)} h, mediana ${mediana(inc)} h, máximo ${Math.max(...inc)} h.</p>` : `<p class="muted small">Para el período de incubación hacen falta fecha y hora de exposición y de inicio.</p>`}</div>
+  <div class="card"><h2>Curva por fecha de inicio de síntomas</h2>${curva || `<p class="muted">Sin fechas de inicio todavía.</p>`}</div>
+  <div class="card"><h2>Signos y síntomas en los enfermos</h2><div class="tbl"><table><thead><tr><th>Síntoma</th><th class="n">Con el síntoma</th><th class="n">%</th></tr></thead><tbody>
+    ${sint.map(x => `<tr><td>${esc(x.s)}</td><td class="n">${x.n}/${x.d}</td><td class="n">${pct(x.n, x.d)}</td></tr>`).join("")}</tbody></table></div></div>
+  <div class="card"><h2>Exposiciones ${cohorte ? "(cohorte: tasa de ataque y RR)" : "(casos y controles: OR)"}</h2>
+    <p class="small muted">«No sabe» no entra en el cálculo. Con un cero se aplica la corrección de Haldane (+0,5). IC 95 %.</p>
+    <div class="tbl"><table><thead><tr><th>Exposición</th>${cohorte
+      ? `<th class="n">Enfermos / expuestos</th><th class="n">TA expuestos</th><th class="n">Enfermos / no expuestos</th><th class="n">TA no expuestos</th><th class="n">RR</th><th class="n">IC 95 %</th>`
+      : `<th class="n">Casos expuestos</th><th class="n">%</th><th class="n">Controles expuestos</th><th class="n">%</th><th class="n">OR</th><th class="n">IC 95 %</th>`}</tr></thead>
+    <tbody>${filasExp.map(x => `<tr><td>${esc(x.it)}<br><span class="small muted">${esc(x.s)}</span></td>${x.txt}</tr>`).join("") || `<tr><td colspan="7" class="muted">Sin respuestas de exposición todavía.</td></tr>`}</tbody></table></div></div>`;
+}
+
+/* ── Enviar al módulo ─────────────────────────────────────────────────────── */
+function pantallaEnviar() {
+  const c = cfgActiva(), regs = Estado.regs.filter(r => r.codbrote === c.codbrote);
+  const comp = regs.filter(r => r.estado === "COMPLETA"), pend = comp.filter(r => !r.exportado_en), borr = regs.filter(r => r.estado === "BORRADOR");
+  $("#app").innerHTML = `<div class="card"><h2>Enviar al módulo de Gestión de Brotes</h2>
+    <p>${pend.length} entrevistas completas sin enviar · ${comp.length - pend.length} ya enviadas · ${borr.length} borradores (no se envían).</p>
+    <p class="small muted">El archivo sale cifrado: solo el módulo de la app lo puede abrir. Mándelo por WhatsApp o correo a Epidemiología, que lo carga en la pestaña Tablero de campo del brote. Cargarlo dos veces no duplica nada.</p>
+    <div id="msg"></div>
+    <div class="btns"><button class="btn pri" id="btn_env" type="button" ${pend.length ? "" : "disabled"}>Enviar las ${pend.length} sin enviar</button>
+    <button class="btn" id="btn_env_todo" type="button" ${comp.length ? "" : "disabled"}>Volver a enviar todas (${comp.length})</button></div></div>`;
+  const env = async lista => {
+    try {
+      const pkg = await exportarCifrado(c, lista);
+      const nombre = `brote_${c.codbrote}_${hoyISO()}_${lista.length}entrevistas.json`.replace(/[^A-Za-z0-9_.-]/g, "_");
+      const res = await entregarArchivo(nombre, JSON.stringify(pkg));
+      if (res === "cancelado") return;
+      const ahora = new Date().toISOString();
+      for (const r of lista) { r.exportado_en = ahora; await guardarReg(r); }
+      Estado.regs = await leerRegs();
+      Estado.aviso = res === "compartido" ? `Se compartió el archivo con ${lista.length} entrevistas.` : `Se descargó ${nombre}. Mándelo a Epidemiología.`;
+      Estado.tab = "lista"; pintar();
+    } catch (err) { $("#msg").innerHTML = `<div class="aviso bad">No se pudo preparar el archivo: ${esc(err.message || err)}</div>`; }
+  };
+  $("#btn_env").onclick = () => env(pend);
+  $("#btn_env_todo").onclick = () => env(comp);
+}
+
+iniciar();
+</script>
+</body>
+</html>
