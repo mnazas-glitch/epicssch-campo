@@ -13,10 +13,13 @@
 <title>EPICSSCH Campo</title>
 <!--
   Tablero de campo sin conexión de EPICSSCH (Epidemiología Regional, CSS Chiriquí).
-  Esta página NO trae ningún dato: el brote se le carga con el archivo de
-  configuración que descarga el módulo. Lo capturado se guarda CIFRADO en el
-  equipo con la clave de acceso, y sale CIFRADO con la clave pública del brote:
-  solo el módulo de la app puede abrirlo.
+  Esta página NO trae ningún dato: el brote (o el evento de desastre) se le carga
+  con el archivo de configuración que descarga el módulo. Lo capturado se guarda
+  CIFRADO en el equipo con la clave de acceso, y sale CIFRADO con la clave pública
+  del brote o del evento: solo el módulo de la app puede abrirlo.
+  Dos cuestionarios sobre el mismo motor (decisión T1, 15-oct-2026): la entrevista
+  de brote (tipo BROTE) y el día del punto con sus señales de la vigilancia
+  intensificada ante desastres (tipo VID).
   Fuente: EPICSSCH_APP/tablero_campo/ (se publica copiando esta carpeta).
 -->
 <style>
@@ -86,17 +89,25 @@ td.n{text-align:right;font-variant-numeric:tabular-nums}
 .ejes{display:flex;gap:2px;overflow-x:auto;font-size:.6rem;color:var(--muted)}
 .ejes div{flex:none;width:18px;text-align:center;writing-mode:vertical-rl;transform:rotate(180deg);height:44px}
 .bloqueo{max-width:420px;margin:40px auto}
+details.sind{border-bottom:1px solid var(--line)}
+details.sind summary{display:flex;gap:10px;align-items:center;min-height:var(--tap);cursor:pointer;padding:4px 0;list-style:none}
+details.sind summary::-webkit-details-marker{display:none}
+details.sind summary span{flex:1;min-width:0}
+details.sind summary::after{content:"+";font-weight:700;color:var(--muted);width:18px;text-align:center}
+details.sind[open] summary::after{content:"\2212"}
+.tot{min-width:28px;text-align:center;font-size:.8rem;border-radius:999px;background:var(--accent-soft);color:var(--accent);padding:2px 8px}
+.tot:empty{display:none}
+.g3{display:grid;grid-template-columns:minmax(0,1fr) 84px 84px;gap:6px 8px;align-items:center;padding:4px 0 12px}
+.g3 .hd{font-size:.75rem;font-weight:700;color:var(--muted);text-align:center}
+.g3 .hd.l{text-align:left;font-weight:600;color:var(--fg);font-size:.88rem}
+.g3 input{text-align:center;padding:6px 4px}
+.pill.PEND{background:var(--warn-soft);color:var(--warn)} .pill.OK{background:var(--ok-soft);color:var(--ok)}
 .oculto{display:none!important}
 </style>
 </head>
 <body>
 <header class="bar"><b>EPICSSCH Campo</b><span class="sp"></span><span id="hdr_brote" class="small"></span><button id="btn_bloquear" class="oculto" type="button">Bloquear</button></header>
-<nav class="tabs oculto" id="tabs" role="tablist">
-  <button type="button" role="tab" data-tab="lista" aria-selected="true">Entrevistas</button>
-  <button type="button" role="tab" data-tab="analisis" aria-selected="false">Análisis preliminar</button>
-  <button type="button" role="tab" data-tab="enviar" aria-selected="false">Enviar</button>
-  <button type="button" role="tab" data-tab="brotes" aria-selected="false">Brotes</button>
-</nav>
+<nav class="tabs oculto" id="tabs" role="tablist"></nav>
 <main id="app"><div class="card"><p>Cargando…</p></div></main>
 <div class="fab oculto" id="fab"><button class="btn pri" id="btn_nueva" type="button">+ Nueva entrevista</button></div>
 <input type="file" id="file_cfg" accept=".json,application/json" class="oculto">
@@ -106,7 +117,7 @@ td.n{text-align:right;font-variant-numeric:tabular-nums}
 /* ============================================================================
    MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
    ========================================================================== */
-const APP_VERSION = "1.0.0";
+const APP_VERSION = "1.1.0";
 const CFG_SCHEMA = "epicssch.campo.config";
 const PKG_SCHEMA = "epicssch.campo.paquete";
 const CIF_SCHEMA = "epicssch.campo.cifrado";
@@ -125,6 +136,11 @@ function canon(v) {           // JSON con claves ordenadas: misma huella en cual
   if (v && typeof v === "object") return "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}";
   return JSON.stringify(v ?? null);
 }
+// Cada configuración tiene su identificador: el CODBROTE en Brotes, la referencia
+// VID-<evento>-<unidad> en Desastres. Los registros viejos de Brotes no traen cfg.
+const cfgId = c => c ? (c.ref || c.codbrote) : null;
+const regCfg = r => r.cfg || r.codbrote;
+const etiquetaCfg = c => c.tipo === "VID" ? "Desastre · " + c.unidad : c.codbrote;
 async function sha256hex(txt) { const h = await crypto.subtle.digest("SHA-256", te.encode(txt)); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
 
 // ── IndexedDB (con respaldo en memoria si el navegador la niega) ──────────────
@@ -182,7 +198,7 @@ setInterval(() => { if (Llave.k && Date.now() - Llave.ultimo > BLOQUEO_MIN * 600
 async function guardarReg(r) {
   r.actualizado = new Date().toISOString();
   const c = await cifrarLocal(r);
-  await DB.put("reg", { uuid: r.uuid, codbrote: r.codbrote, estado: r.estado, rol: r.rol, actualizado: r.actualizado, exportado_en: r.exportado_en || null, ...c });
+  await DB.put("reg", { uuid: r.uuid, codbrote: regCfg(r), estado: r.estado, rol: r.rol || r.tipo_reg, actualizado: r.actualizado, exportado_en: r.exportado_en || null, ...c });
 }
 async function leerRegs() {
   const filas = await DB.all("reg"); const out = [];
@@ -190,8 +206,9 @@ async function leerRegs() {
   return out.sort((a, b) => (b.actualizado || "").localeCompare(a.actualizado || ""));
 }
 async function limpiarViejos() {     // T3: lo ya exportado se borra a los 30 días
+  // Menos los puntos nuevos de Desastres: los días que se capturen después los siguen citando.
   const filas = await DB.all("reg"); const lim = Date.now() - RETENCION_DIAS * 86400000; let n = 0;
-  for (const f of filas) if (f.exportado_en && Date.parse(f.exportado_en) < lim) { await DB.del("reg", f.uuid); n++; }
+  for (const f of filas) if (f.exportado_en && f.rol !== "PUNTO" && Date.parse(f.exportado_en) < lim) { await DB.del("reg", f.uuid); n++; }
   return n;
 }
 
@@ -206,6 +223,10 @@ async function exportarCifrado(cfg, regs) {
   const paquete = { schema_id: PKG_SCHEMA + "." + cfg.tipo.toLowerCase(), schema_version: APP_VERSION, codbrote: cfg.codbrote,
     exported_at: new Date().toISOString(), device_id: Estado.device, total: regs.length, registros: regs };
   paquete.sha256 = await sha256hex(canon(paquete));
+  return sellarSobre(cfg, paquete, regs.length, paquete.exported_at, { codbrote: cfg.codbrote });
+}
+// Envuelve cualquier paquete (el de Brotes o el de Desastres) en el sobre cifrado.
+async function sellarSobre(cfg, paquete, total, creado, extra) {
   const pub = await crypto.subtle.importKey("spki", unb64(cfg.clave.spki), { name: "RSA-OAEP", hash: "SHA-1" }, false, ["encrypt"]);
   const raw = crypto.getRandomValues(new Uint8Array(64));
   const k = await crypto.subtle.importKey("raw", raw.slice(0, 32), "AES-GCM", false, ["encrypt"]);
@@ -215,8 +236,8 @@ async function exportarCifrado(cfg, regs) {
   const firmado = new Uint8Array(iv.length + ct.length); firmado.set(iv); firmado.set(ct, iv.length);
   const mac = await crypto.subtle.sign("HMAC", km, firmado);
   const ek = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, pub, raw);
-  return { schema_id: CIF_SCHEMA, schema_version: APP_VERSION, tipo: cfg.tipo, codbrote: cfg.codbrote, kid: cfg.clave.kid,
-    total: regs.length, creado: paquete.exported_at, ek: b64(ek), iv: b64(iv), ct: b64(ct), mac: b64(mac) };
+  return { schema_id: CIF_SCHEMA, schema_version: APP_VERSION, tipo: cfg.tipo, ...extra, kid: cfg.clave.kid,
+    total, creado, ek: b64(ek), iv: b64(iv), ct: b64(ct), mac: b64(mac) };
 }
 async function entregarArchivo(nombre, texto) {
   const archivo = new File([texto], nombre, { type: "application/json" });
@@ -235,7 +256,7 @@ async function entregarArchivo(nombre, texto) {
    ESTADO Y PANTALLAS
    ========================================================================== */
 const Estado = { tab: "lista", cfgs: [], activo: null, regs: [], editando: null, device: null, entrevistador: "", aviso: null };
-const cfgActiva = () => Estado.cfgs.find(c => c.codbrote === Estado.activo) || null;
+const cfgActiva = () => Estado.cfgs.find(c => cfgId(c) === Estado.activo) || null;
 
 async function iniciar() {
   if (!window.isSecureContext || !crypto.subtle) {
@@ -247,7 +268,7 @@ async function iniciar() {
   if ("serviceWorker" in navigator && location.protocol === "https:") { try { await navigator.serviceWorker.register("sw.js"); } catch (e) {} }
   Estado.device = (await DB.get("cfg", "device")) || uuid(); await DB.put("cfg", Estado.device, "device");
   Estado.cfgs = (await DB.get("cfg", "brotes")) || [];
-  Estado.activo = (await DB.get("cfg", "activo")) || (Estado.cfgs[0] && Estado.cfgs[0].codbrote) || null;
+  Estado.activo = (await DB.get("cfg", "activo")) || cfgId(Estado.cfgs[0]) || null;
   Estado.entrevistador = (await DB.get("cfg", "entrevistador")) || "";
   pintar();
 }
@@ -261,20 +282,39 @@ function avisoInstalar() {
     : `<div class="aviso info">Instálelo desde el menú del navegador (<b>Instalar aplicación</b> o <b>Agregar a la pantalla principal</b>) para usarlo sin internet.</div>`;
 }
 
+const TABS = {
+  BROTE: [["lista", "Entrevistas"], ["analisis", "Análisis preliminar"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]],
+  VID: [["dias", "Días"], ["senales", "Señales"], ["puntos", "Puntos"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]]
+};
+function pintarTabs(c) {
+  const t = c ? (TABS[c.tipo] || TABS.BROTE) : [["brotes", "Brotes y eventos"]];
+  if (!t.some(x => x[0] === Estado.tab)) Estado.tab = t[0][0];
+  $("#tabs").innerHTML = t.map(([k, n]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${k === Estado.tab}">${n}</button>`).join("");
+  $("#tabs").querySelectorAll("button").forEach(b => b.onclick = () => { Estado.tab = b.dataset.tab; Estado.editando = null; pintar(); });
+}
+function ponerFab(c) {
+  let txt = null;
+  if (c && !Estado.editando) {
+    if (c.tipo === "VID") txt = { dias: "+ Capturar un día", senales: "+ Nueva señal", puntos: "+ Punto nuevo" }[Estado.tab] || null;
+    else if (Estado.tab === "lista") txt = "+ Nueva entrevista";
+  }
+  $("#fab").classList.toggle("oculto", !txt);
+  if (txt) $("#btn_nueva").textContent = txt;
+}
 async function pintar() {
   const bloq = await DB.get("cfg", "bloqueo");
   const desbloqueado = !!Llave.k;
+  const c = cfgActiva();
   $("#tabs").classList.toggle("oculto", !desbloqueado);
   $("#btn_bloquear").classList.toggle("oculto", !desbloqueado);
-  $("#fab").classList.toggle("oculto", !desbloqueado || !cfgActiva() || Estado.editando !== null || Estado.tab !== "lista");
-  const c = cfgActiva(); $("#hdr_brote").textContent = c ? c.codbrote : "";
-  if (!bloq) return pantallaCrearClave();
-  if (!desbloqueado) return pantallaAbrir();
-  if (Estado.editando) Estado.tab = "lista";
-  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === Estado.tab ? "true" : "false"));
-  if (Estado.editando) return pantallaEntrevista();
-  if (!c && Estado.tab !== "brotes") Estado.tab = "brotes";
-  ({ lista: pantallaLista, analisis: pantallaAnalisis, enviar: pantallaEnviar, brotes: pantallaBrotes })[Estado.tab]();
+  $("#hdr_brote").textContent = c ? etiquetaCfg(c) : "";
+  if (!bloq || !desbloqueado) { $("#fab").classList.add("oculto"); return bloq ? pantallaAbrir() : pantallaCrearClave(); }
+  pintarTabs(c); ponerFab(c);
+  if (Estado.editando) return c.tipo === "VID" ? pantallaVidEdicion() : pantallaEntrevista();
+  const P = c && c.tipo === "VID"
+    ? { dias: pantallaDias, senales: pantallaSenales, puntos: pantallaPuntos, enviar: pantallaEnviarVid, brotes: pantallaBrotes }
+    : { lista: pantallaLista, analisis: pantallaAnalisis, enviar: pantallaEnviar, brotes: pantallaBrotes };
+  P[Estado.tab]();
 }
 
 function pantallaCrearClave() {
@@ -317,39 +357,46 @@ function confirmar(texto, boton, fn) {      // confirmación dentro de la págin
   si.onclick = async () => { d.remove(); await fn(); }; no.onclick = () => d.remove();
 }
 
-/* ── Brotes cargados en el equipo ─────────────────────────────────────────── */
+/* ── Brotes y eventos cargados en el equipo ───────────────────────────────── */
 function pantallaBrotes() {
-  const filas = Estado.cfgs.map(c => `<div class="it"><div class="tx"><b>${esc(c.codbrote)}</b><span class="small muted">${esc(c.nombre || c.evento)} · ${esc(c.evento)}</span></div>
-     ${c.codbrote === Estado.activo ? `<span class="pill">Activo</span>` : `<button class="btn" data-act="${esc(c.codbrote)}" type="button">Usar</button>`}</div>`).join("");
-  $("#app").innerHTML = `${avisoInstalar()}<div class="card"><h2>Brotes en este equipo</h2>
-    <p class="muted small">Cargue el archivo de configuración que se descarga en el módulo de Gestión de Brotes (pestaña Tablero de campo). Le llega por WhatsApp o correo.</p>
-    <div class="lista">${filas || `<p class="muted">Todavía no hay ningún brote cargado.</p>`}</div>
-    <div id="msg"></div><div class="btns"><button class="btn pri" id="btn_cargar" type="button">Cargar archivo del brote</button></div></div>
-    <div class="card"><h2>Entrevistador</h2><label class="f" for="entrev">Nombre de quien entrevista en este equipo</label><input type="text" id="entrev" value="${esc(Estado.entrevistador)}"></div>
+  const filas = Estado.cfgs.map(c => `<div class="it"><div class="tx"><b>${esc(c.tipo === "VID" ? c.nombre : c.codbrote)}</b><span class="small muted">${c.tipo === "VID"
+      ? `Vigilancia ante desastres · Unidad ${esc(c.unidad)} · ${(c.puntos || []).length} puntos`
+      : `${esc(c.nombre || c.evento)} · ${esc(c.evento)}`}</span></div>
+     ${cfgId(c) === Estado.activo ? `<span class="pill">Activo</span>` : `<button class="btn" data-act="${esc(cfgId(c))}" type="button">Usar</button>`}</div>`).join("");
+  $("#app").innerHTML = `${avisoInstalar()}<div class="card"><h2>Brotes y eventos en este equipo</h2>
+    <p class="muted small">Cargue el archivo de configuración que le manda Epidemiología por WhatsApp o correo: el de un brote sale de Gestión de Brotes (pestaña Tablero de campo); el de un desastre, de Vigilancia ante desastres (pestaña Sin conexión).</p>
+    <div class="lista">${filas || `<p class="muted">Todavía no hay ningún brote ni evento cargado.</p>`}</div>
+    <div id="msg"></div><div class="btns"><button class="btn pri" id="btn_cargar" type="button">Cargar archivo del brote o del evento</button></div></div>
+    ${Estado.cfgs.some(c => c.tipo !== "VID") ? `<div class="card"><h2>Entrevistador</h2><label class="f" for="entrev">Nombre de quien entrevista en este equipo</label><input type="text" id="entrev" value="${esc(Estado.entrevistador)}"></div>` : ""}
     <p class="small muted">EPICSSCH Campo ${APP_VERSION}</p>`;
-  $("#app").querySelectorAll("[data-act]").forEach(b => b.onclick = async () => { Estado.activo = b.dataset.act; await DB.put("cfg", Estado.activo, "activo"); Estado.tab = "lista"; pintar(); });
+  $("#app").querySelectorAll("[data-act]").forEach(b => b.onclick = async () => { Estado.activo = b.dataset.act; await DB.put("cfg", Estado.activo, "activo"); Estado.tab = ""; pintar(); });
   $("#btn_cargar").onclick = () => $("#file_cfg").click();
-  $("#entrev").onchange = async e => { Estado.entrevistador = e.target.value.trim(); await DB.put("cfg", Estado.entrevistador, "entrevistador"); };
+  const en = $("#entrev"); if (en) en.onchange = async e => { Estado.entrevistador = e.target.value.trim(); await DB.put("cfg", Estado.entrevistador, "entrevistador"); };
 }
 $("#file_cfg").onchange = async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
   try {
     const c = JSON.parse(await f.text());
-    if (c.schema_id !== CFG_SCHEMA) throw new Error("Ese archivo no es la configuración de un brote de EPICSSCH.");
-    if (!c.codbrote || !c.clave || !c.clave.spki) throw new Error("Al archivo le falta el código del brote o su clave.");
+    if (c.schema_id === "epicssch.vid.captura") throw new Error("Ese archivo es una captura ya exportada, no una configuración. Se carga en la app, no aquí.");
+    if (c.schema_id !== CFG_SCHEMA) throw new Error("Ese archivo no es la configuración de un brote ni de un evento de EPICSSCH.");
+    if (!c.clave || !c.clave.spki) throw new Error("Al archivo le falta su clave.");
+    if (c.tipo === "VID") {
+      if (!c.ref || !c.evento || !c.evento.id || !c.unidad || !Array.isArray(c.puntos) || !c.catalogos || !c.paquete)
+        throw new Error("Al archivo del evento le faltan datos: descárguelo de nuevo en la app.");
+    } else if (!c.codbrote) throw new Error("Al archivo le falta el código del brote.");
     await crypto.subtle.importKey("spki", unb64(c.clave.spki), { name: "RSA-OAEP", hash: "SHA-1" }, false, ["encrypt"]);
-    const previo = Estado.cfgs.find(x => x.codbrote === c.codbrote);
-    Estado.cfgs = Estado.cfgs.filter(x => x.codbrote !== c.codbrote).concat([c]);
-    Estado.activo = c.codbrote;
+    const previo = Estado.cfgs.find(x => cfgId(x) === cfgId(c));
+    Estado.cfgs = Estado.cfgs.filter(x => cfgId(x) !== cfgId(c)).concat([c]);
+    Estado.activo = cfgId(c);
     await DB.put("cfg", Estado.cfgs, "brotes"); await DB.put("cfg", Estado.activo, "activo");
-    Estado.tab = "lista"; Estado.aviso = `Brote ${c.codbrote} cargado${previo ? " (actualizado)" : ""}.`; pintar();
+    Estado.tab = ""; Estado.aviso = (c.tipo === "VID" ? `Evento ${c.nombre}, unidad ${c.unidad}, cargado` : `Brote ${c.codbrote} cargado`) + (previo ? " (actualizado)." : "."); pintar();
   } catch (err) { const m = $("#msg"); if (m) m.innerHTML = `<div class="aviso bad">${esc(err.message || "No se pudo leer el archivo.")}</div>`; }
 };
 
 /* ── Lista de entrevistas ─────────────────────────────────────────────────── */
 function rotRol(r) { return r.rol === "CASO" ? "Caso" : r.rol === "CONTROL" ? "Control" : (r.enfermo === true ? "Cohorte · enfermó" : r.enfermo === false ? "Cohorte · no enfermó" : "Cohorte"); }
 function pantallaLista() {
-  const c = cfgActiva(); const regs = Estado.regs.filter(r => r.codbrote === c.codbrote);
+  const c = cfgActiva(); const regs = Estado.regs.filter(r => regCfg(r) === cfgId(c));
   const pend = regs.filter(r => !r.exportado_en).length;
   const filas = regs.map(r => `<div class="it" data-ed="${r.uuid}" role="button" tabindex="0">
       <div class="tx"><b>${esc(r.persona.nombre || "(sin nombre)")}</b><span class="small muted">${esc(rotRol(r))} · ${esc((r.actualizado || "").slice(0, 16).replace("T", " "))}</span></div>
@@ -366,13 +413,13 @@ function pantallaLista() {
 }
 $("#btn_nueva").onclick = () => {
   const c = cfgActiva();
+  if (c.tipo === "VID") return nuevoVid(c);
   Estado.editando = { uuid: uuid(), codbrote: c.codbrote, estado: "BORRADOR", rol: null, enfermo: null, entrevistador: Estado.entrevistador,
     fecha_entrevista: hoyISO(), hora_entrevista: ahoraHM(), creado: new Date().toISOString(),
     persona: {}, lugar: {}, tiempo: {}, clinica: { sintomas: {} }, exposiciones: {}, laboratorio: {}, observaciones: "" };
   pintar(); window.scrollTo(0, 0);
 };
 $("#btn_bloquear").onclick = bloquear;
-document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => { Estado.tab = b.dataset.tab; Estado.editando = null; pintar(); });
 
 /* ============================================================================
    CUESTIONARIO DE BROTE
@@ -505,7 +552,7 @@ function enlazarEntrevista() {
     refrescarValidacion();
   }));
   const guardar = async estado => {
-    r.estado = estado; await guardarReg(r); Estado.regs = await leerRegs();
+    r.estado = estado; r.exportado_en = null; await guardarReg(r); Estado.regs = await leerRegs();
     Estado.editando = null; Estado.aviso = estado === "COMPLETA" ? "Entrevista guardada." : "Borrador guardado."; pintar(); window.scrollTo(0, 0);
   };
   $("#btn_completa").onclick = () => guardar("COMPLETA");
@@ -535,7 +582,7 @@ const pct = (n, d) => d ? Math.round(100 * n / d) + " %" : "—";
 function mediana(v) { const s = [...v].sort((a, b) => a - b), m = Math.floor(s.length / 2); return s.length ? (s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2) : null; }
 
 function pantallaAnalisis() {
-  const c = cfgActiva(), regs = Estado.regs.filter(r => r.codbrote === c.codbrote && r.estado === "COMPLETA");
+  const c = cfgActiva(), regs = Estado.regs.filter(r => regCfg(r) === cfgId(c) && r.estado === "COMPLETA");
   const casos = regs.filter(r => r.rol === "CASO"), ctrl = regs.filter(r => r.rol === "CONTROL"), coh = regs.filter(r => r.rol === "COHORTE");
   const enf = regs.filter(enfermo);
   const cohorte = coh.length > 0 && casos.length + ctrl.length === 0;
@@ -584,7 +631,7 @@ function pantallaAnalisis() {
 
 /* ── Enviar al módulo ─────────────────────────────────────────────────────── */
 function pantallaEnviar() {
-  const c = cfgActiva(), regs = Estado.regs.filter(r => r.codbrote === c.codbrote);
+  const c = cfgActiva(), regs = Estado.regs.filter(r => regCfg(r) === cfgId(c));
   const comp = regs.filter(r => r.estado === "COMPLETA"), pend = comp.filter(r => !r.exportado_en), borr = regs.filter(r => r.estado === "BORRADOR");
   $("#app").innerHTML = `<div class="card"><h2>Enviar al módulo de Gestión de Brotes</h2>
     <p>${pend.length} entrevistas completas sin enviar · ${comp.length - pend.length} ya enviadas · ${borr.length} borradores (no se envían).</p>
@@ -607,6 +654,434 @@ function pantallaEnviar() {
   };
   $("#btn_env").onclick = () => env(pend);
   $("#btn_env_todo").onclick = () => env(comp);
+}
+
+/* ============================================================================
+   VIGILANCIA INTENSIFICADA ANTE DESASTRES (tipo VID)
+   Las reglas son las de funciones_vid.R:
+   - el día va de corte a corte (hora del evento, hora de Panamá) y lleva la
+     fecha del corte que lo cierra;
+   - un punto que reportó y no anotó un síndrome tiene 0; sin reportar es SD;
+   - la fila 19 (lesiones de causa externa) no va en la grilla: sale de
+     lesiones y defunciones;
+   - sin nombres ni cédulas: ningún campo los pide y una cédula escrita se rechaza;
+   - un punto abierto en el terreno queda pendiente de que Coordinación lo
+     apruebe al cargar (decisión V2).
+   Lo que se envía es el mismo paquete que lee vid_leer_paquete() en R, con su
+   huella SHA-256 sobre el JSON canónico, dentro del sobre cifrado.
+   ========================================================================== */
+const PA_MS = -5 * 3600000;                     // Panamá: UTC-5, sin horario de verano
+const enPanama = (d = new Date()) => new Date(d.getTime() + PA_MS);
+const fechaPA = (d = new Date()) => enPanama(d).toISOString().slice(0, 10);
+const horaPA = (d = new Date()) => enPanama(d).toISOString().slice(11, 16);
+function diaCorte(c, d = new Date()) {
+  const [h, m] = String(c.evento.hora_corte_local || "11:00").split(":").map(Number);
+  const p = enPanama(d), min = p.getUTCHours() * 60 + p.getUTCMinutes() + (p.getUTCSeconds() > 0 ? 1 : 0);
+  if (min > h * 60 + m) p.setUTCDate(p.getUTCDate() + 1);
+  return p.toISOString().slice(0, 10);
+}
+const ddmm = f => f ? f.slice(8, 10) + "/" + f.slice(5, 7) : "";
+const normNom = s => String(s || "").trim().toUpperCase().replace(/\s+/g, " ");
+const nombreCat = (lista, cod) => ((lista || []).find(x => String(x.codigo) === String(cod)) || { nombre: cod }).nombre;
+const plural = (n, a, b) => n + " " + (n === 1 ? a : b);
+function traeCedula(c, t) { try { return !!t && new RegExp(c.catalogos.patron_cedula).test(String(t).toUpperCase()); } catch (e) { return false; } }
+const esEntero = v => v === "" || v == null || (Number.isInteger(Number(v)) && Number(v) >= 0);
+const ent = v => { const n = Number(v); return Number.isInteger(n) && n > 0 ? n : 0; };
+const regsDe = (c, tipo) => Estado.regs.filter(r => regCfg(r) === cfgId(c) && r.tipo_reg === tipo);
+
+// Puntos: los de la configuración y los abiertos en el terreno. Uno del terreno que
+// ya llegó aprobado en una configuración nueva (mismo tipo y nombre) deja de ofrecerse.
+function puntosVid(c) {
+  const of = (c.puntos || []).map(p => ({ key: "p" + p.id, id: p.id, uuid: null, nombre: p.nombre, tipo: p.tipo, tipo_nombre: p.tipo_nombre, nuevo: false }));
+  const nv = regsDe(c, "PUNTO").map(p => ({ key: "n" + p.uuid, id: null, uuid: p.uuid, nombre: p.nombre, tipo: p.tipo,
+    tipo_nombre: nombreCat(c.catalogos.tipos_punto, p.tipo), nuevo: true, reg: p,
+    aprobado: of.some(o => o.tipo === p.tipo && normNom(o.nombre) === normNom(p.nombre)) }));
+  return of.concat(nv);
+}
+const puntoDe = (c, r) => puntosVid(c).find(p => r.punto_uuid ? p.uuid === r.punto_uuid : p.id === r.punto_id);
+const nomPunto = (c, r) => { const p = puntoDe(c, r); return p ? p.nombre + (p.nuevo && !p.aprobado ? " (nuevo)" : "") : "Punto " + (r.punto_id ?? ""); };
+const uuidDia = (c, key, dia) => "dia|" + cfgId(c) + "|" + key + "|" + dia;
+
+function totalesDia(r) {
+  const s = o => Object.values(o || {}).reduce((a, n) => a + ent(n), 0);
+  return { casos: s(r.grilla), les: Object.values(r.les || {}).reduce((a, x) => a + ent(x.n), 0), def: s(r.def) };
+}
+function resumenDia(r) {
+  if (r.morbilidad === false) return "Solo riesgos (no reporta morbilidad)";
+  const t = totalesDia(r);
+  if (!t.casos && !t.les && !t.def) return "Sin casos";
+  return [t.casos && plural(t.casos, "caso", "casos"), t.les && plural(t.les, "lesionado", "lesionados"), t.def && plural(t.def, "defunción", "defunciones")].filter(Boolean).join(", ");
+}
+
+/* ── Nuevo registro según la pestaña ──────────────────────────────────────── */
+function nuevoVid(c) {
+  if (Estado.tab === "senales") {
+    Estado.editando = { uuid: uuid(), cfg: cfgId(c), tipo_reg: "SENAL", estado: "COMPLETA", punto_id: null, punto_uuid: null,
+      fecha: fechaPA(), hora: horaPA(), lugar: "", senal: "", n_personas: "", fuente: "", descripcion: "", avisado_a: "", avisado_hora: "" };
+  } else if (Estado.tab === "puntos") {
+    Estado.editando = { uuid: uuid(), cfg: cfgId(c), tipo_reg: "PUNTO", estado: "COMPLETA", tipo: "", nombre: "", poblacion: "",
+      distrito: "", codigo_geo: "", corregimiento: "", creado_en: new Date().toISOString() };
+  } else {
+    Estado.tab = "dias";
+    // El primer punto al que le falta el día de hoy.
+    const hoy = diaCorte(c), pts = puntosVid(c).filter(x => !x.aprobado);
+    const p = pts.find(x => !Estado.regs.some(r => r.uuid === uuidDia(c, x.key, hoy))) || pts[0];
+    abrirDia(c, p ? p.key : "", hoy);
+    return;
+  }
+  pintar(); window.scrollTo(0, 0);
+}
+// Abre el día de un punto: el guardado en el equipo si existe, o uno en blanco.
+function abrirDia(c, key, dia) {
+  const ya = Estado.regs.find(x => x.uuid === uuidDia(c, key, dia));
+  if (ya) { Estado.editando = structuredClone(ya); Estado.aviso = null; }
+  else {
+    const p = puntosVid(c).find(x => x.key === key);
+    Estado.editando = { uuid: null, cfg: cfgId(c), tipo_reg: "DIA", estado: "COMPLETA", punto_key: key, punto_id: p ? p.id : null,
+      punto_uuid: p ? p.uuid : null, dia, morbilidad: true, grilla: {}, les: {}, def: {}, ries: {} };
+  }
+  pintar(); window.scrollTo(0, 0);
+}
+function pantallaVidEdicion() {
+  const t = Estado.editando.tipo_reg;
+  return t === "SENAL" ? pantallaSenal() : t === "PUNTO" ? pantallaPunto() : pantallaDia();
+}
+function avisos(v) { return v.e.map(x => `<div class="aviso bad">${esc(x)}</div>`).join("") + v.a.map(x => `<div class="aviso warn">${esc(x)}</div>`).join(""); }
+function cabeceraVid(c) {
+  return `<div class="card"><h1>${esc(c.nombre)}</h1><p class="muted">${esc(c.tipo_evento || "")}${c.tipo_evento ? " · " : ""}Unidad ${esc(c.unidad)}</p>
+    <p class="small muted">El día va de ${esc(c.evento.hora_corte_local)} a ${esc(c.evento.hora_corte_local)} (hora de Panamá) y lleva la fecha del corte que lo cierra. Primer día del evento: ${ddmm(c.evento.primer_dia)}.</p>`;
+}
+
+/* ── Días ─────────────────────────────────────────────────────────────────── */
+function pantallaDias() {
+  const c = cfgActiva(), hoy = diaCorte(c);
+  const dias = regsDe(c, "DIA").sort((a, b) => b.dia.localeCompare(a.dia) || nomPunto(c, a).localeCompare(nomPunto(c, b)));
+  const pts = puntosVid(c).filter(p => !p.aprobado);
+  const faltan = pts.filter(p => !dias.some(d => d.dia === hoy && d.punto_key === p.key));
+  const pend = dias.filter(d => !d.exportado_en).length;
+  const filas = dias.map(r => `<div class="it" data-ed="${esc(r.uuid)}" role="button" tabindex="0">
+      <div class="tx"><b>${ddmm(r.dia)} · ${esc(nomPunto(c, r))}</b><span class="small muted">${esc(resumenDia(r))}</span></div>
+      ${r.exportado_en ? `<span class="pill OK">Enviado</span>` : `<span class="pill PEND">Sin enviar</span>`}</div>`).join("");
+  $("#app").innerHTML = `${Estado.aviso ? `<div class="aviso ok">${esc(Estado.aviso)}</div>` : ""}${avisoInstalar()}
+    ${cabeceraVid(c)}<p class="small">Hoy es el día <b>${ddmm(hoy)}</b>. ${pts.length ? (faltan.length ? `Falta: ${faltan.map(p => esc(p.nombre)).join(", ")}.` : "Todos los puntos tienen el día de hoy.") : "Esta configuración no trae puntos: agregue uno en la pestaña Puntos."}</p>
+    <p class="small muted">${plural(dias.length, "día guardado", "días guardados")} · ${pend} sin enviar</p></div>
+    <div class="card lista">${filas || `<p class="muted">Todavía no hay días. Toque <b>Capturar un día</b>.</p>`}</div>`;
+  Estado.aviso = null;
+  $("#app").querySelectorAll("[data-ed]").forEach(el => { const ab = () => { Estado.editando = structuredClone(Estado.regs.find(r => r.uuid === el.dataset.ed)); pintar(); window.scrollTo(0, 0); }; el.onclick = ab; el.onkeydown = e => { if (e.key === "Enter") ab(); }; });
+}
+
+function validarDia(c, r) {
+  const e = [], a = [], cat = c.catalogos, hoy = diaCorte(c);
+  if (!r.punto_key) e.push("Elija el punto.");
+  if (!r.dia) e.push("Elija el día.");
+  else if (r.dia < c.evento.primer_dia) e.push("Ese día es anterior al evento.");
+  else if (r.dia > hoy) e.push("No se puede guardar un día que todavía no empieza.");
+  if (r.morbilidad !== false) {
+    cat.anexo1.forEach(f => { if (cat.grupos_edad.some(g => cat.sexos.some(s => !esEntero(r.grilla[f.codigo + "|" + g.codigo + "|" + s.codigo]))))
+      e.push(`Fila ${f.fila} (${f.nombre}): anote números enteros, cero o más.`); });
+    cat.mecanismos.forEach(m => { const x = r.les[m.codigo] || {};
+      if (!esEntero(x.n) || !esEntero(x.h)) e.push(`${m.nombre}: anote números enteros, cero o más.`);
+      else if (ent(x.h) > ent(x.n)) e.push(`${m.nombre}: hay más hospitalizados que lesionados.`); });
+    cat.relacion_def.forEach(d => { if (!esEntero(r.def[d.codigo])) e.push(`${d.nombre}: anote un número entero, cero o más.`); });
+  }
+  let evaluados = 0;
+  cat.riesgos.forEach(x => { const v = r.ries[x.codigo]; if (!v || !v.e) return; evaluados++;
+    if ((v.e === "RIESGO" || v.e === "CRITICO") && !(v.o || "").trim()) e.push(`${x.nombre}: anote qué se observó.`);
+    if (traeCedula(c, v.o)) e.push(`${x.nombre}: la observación no lleva cédulas.`); });
+  if (r.morbilidad === false && !evaluados) e.push("Sin morbilidad y sin riesgos no hay nada que guardar.");
+  const otro = Estado.regs.find(x => x.uuid === uuidDia(c, r.punto_key, r.dia));
+  if (otro && otro.uuid !== r.uuid) a.push("Este día ya está guardado en este equipo: al guardar, lo reemplaza.");
+  if (r.morbilidad !== false && !e.length) { const t = totalesDia(r); if (!t.casos && !t.les && !t.def) a.push("Todo en cero: se guardará como día sin casos."); }
+  return { e, a };
+}
+const numIn = (k, key, val, rot) => `<input type="number" inputmode="numeric" min="0" step="1" data-n="${k}" data-key="${esc(key)}" value="${esc(val ?? "")}" placeholder="0" aria-label="${esc(rot)}">`;
+
+function pantallaDia() {
+  const c = cfgActiva(), r = Estado.editando, cat = c.catalogos, hoy = diaCorte(c);
+  const pts = puntosVid(c).filter(p => !p.aprobado || p.key === r.punto_key);
+  const guardado = r.uuid && Estado.regs.some(x => x.uuid === r.uuid);
+  const v = validarDia(c, r);
+  const totF = f => cat.grupos_edad.reduce((a, g) => a + cat.sexos.reduce((b, s) => b + ent(r.grilla[f.codigo + "|" + g.codigo + "|" + s.codigo]), 0), 0);
+  const grilla = cat.anexo1.map(f => { const t = totF(f); return `<details class="sind" data-sind="${esc(f.codigo)}" ${t ? "open" : ""}>
+      <summary><span>${f.fila}. ${esc(f.nombre)}</span><b class="tot">${t || ""}</b></summary>
+      <div class="g3"><span></span>${cat.sexos.map(s => `<span class="hd">${esc(s.nombre)}</span>`).join("")}
+      ${cat.grupos_edad.map(g => `<span class="hd l">${esc(g.nombre)}</span>${cat.sexos.map(s => numIn("g", f.codigo + "|" + g.codigo + "|" + s.codigo,
+        r.grilla[f.codigo + "|" + g.codigo + "|" + s.codigo], f.nombre + ", " + g.nombre + ", " + s.nombre)).join("")}`).join("")}</div></details>`; }).join("");
+  const les = `<div class="g3"><span></span><span class="hd">Lesionados</span><span class="hd">Hospitalizados</span>
+      ${cat.mecanismos.map(m => `<span class="hd l">${esc(m.nombre)}</span>${numIn("ln", m.codigo, (r.les[m.codigo] || {}).n, m.nombre + ", lesionados")}${numIn("lh", m.codigo, (r.les[m.codigo] || {}).h, m.nombre + ", hospitalizados")}`).join("")}</div>`;
+  const def = `<div class="g3"><span></span><span class="hd">Defunciones</span><span></span>
+      ${cat.relacion_def.map(d => `<span class="hd l">${esc(d.nombre)}</span>${numIn("d", d.codigo, r.def[d.codigo], d.nombre)}<span></span>`).join("")}</div>`;
+  const nEval = cat.riesgos.filter(x => (r.ries[x.codigo] || {}).e).length;
+  const ries = cat.riesgos.map(x => { const val = r.ries[x.codigo] || {}; return `<div style="padding:8px 0;border-bottom:1px solid var(--line)">
+      <b class="small">${esc(x.nombre)}</b> <span class="small muted">${esc(x.grupo)}</span>
+      <div class="row"><select data-re="${esc(x.codigo)}" aria-label="${esc(x.nombre)}"><option value="">Sin evaluar</option>${cat.estados_riesgo.map(e => `<option value="${esc(e.codigo)}" ${e.codigo === val.e ? "selected" : ""}>${esc(e.nombre)}</option>`).join("")}</select>
+      <input type="text" data-ro="${esc(x.codigo)}" value="${esc(val.o || "")}" placeholder="Qué se observó" aria-label="${esc(x.nombre)}, observación"></div></div>`; }).join("");
+  $("#app").innerHTML = `
+  <div class="card"><div class="btns" style="margin-top:0"><button class="btn" id="btn_volver" type="button">← Días</button></div>
+    <h1>${guardado ? "Día guardado" : "Capturar un día"}</h1>
+    <div class="row"><div><label class="f" for="v_punto">Punto</label><select id="v_punto"><option value="">Elija</option>${pts.map(p => `<option value="${esc(p.key)}" ${p.key === r.punto_key ? "selected" : ""}>${esc(p.tipo_nombre + ": " + p.nombre + (p.nuevo ? " (nuevo)" : ""))}</option>`).join("")}</select></div>
+    <div><label class="f" for="v_dia">Día (fecha del corte)</label><input type="date" id="v_dia" value="${esc(r.dia)}" min="${esc(c.evento.primer_dia)}" max="${esc(hoy)}"></div></div>
+    <p class="small muted" style="margin-top:8px">Corte a las ${esc(c.evento.hora_corte_local)}: lo atendido después del corte ya es del día siguiente.</p>
+    <label class="f">¿Este punto reporta morbilidad este día?</label>${seg("morb", [["true", "Sí"], ["false", "No, solo riesgos"]], r.morbilidad !== false)}</div>
+  ${r.morbilidad !== false ? `<div class="card"><h2>Casos por síndrome</h2><p class="small muted">Toque un síndrome para anotar sus casos. Lo que se deja vacío cuenta como cero. Las lesiones de causa externa van abajo, no aquí.</p>${grilla}</div>
+  <div class="card"><h2>Lesiones</h2>${les}<h2 style="margin-top:12px">Defunciones relacionadas con el evento</h2>${def}</div>` : ""}
+  <div class="card"><details ${nEval || r.morbilidad === false ? "open" : ""}><summary><b>Riesgos sanitarios y servicios esenciales</b> <span class="small muted">(${nEval ? nEval + " evaluados" : "opcional"})</span></summary>
+    <p class="small muted">Lo que no se evalúa queda sin dato, no como adecuado.</p>${ries}</details></div>
+  <div class="card"><div id="val_dia">${avisos(v)}</div>
+    <div class="btns"><button class="btn pri" id="btn_gdia" type="button" ${v.e.length ? "disabled" : ""}>Guardar el día</button>
+    ${r.morbilidad !== false ? `<button class="btn" id="btn_sincasos" type="button">Día sin casos</button>` : ""}
+    ${guardado ? `<button class="btn bad" id="btn_eliminar" type="button">Eliminar</button>` : ""}</div>
+    <p class="small muted">Se guarda solo en este equipo, cifrado. Para que llegue a la app hay que enviarlo desde la pestaña Enviar.</p></div>`;
+  enlazarDia();
+}
+function enlazarDia() {
+  const c = cfgActiva(), r = Estado.editando;
+  const refrescar = () => { const v = validarDia(c, r); $("#val_dia").innerHTML = avisos(v); $("#btn_gdia").disabled = v.e.length > 0; };
+  $("#btn_volver").onclick = () => { Estado.editando = null; pintar(); };
+  $("#v_punto").onchange = e => cambiarDia(e.target.value, r.dia);
+  $("#v_dia").onchange = e => cambiarDia(r.punto_key, e.target.value);
+  $("#app").querySelectorAll("[data-n]").forEach(el => el.oninput = () => {
+    const k = el.dataset.n, key = el.dataset.key, val = el.value.trim();
+    if (k === "g") { if (val) r.grilla[key] = val; else delete r.grilla[key];
+      const d = el.closest("details"), f = d.dataset.sind, t = Object.keys(r.grilla).filter(x => x.startsWith(f + "|")).reduce((a, x) => a + ent(r.grilla[x]), 0);
+      d.querySelector(".tot").textContent = t || ""; }
+    else if (k === "ln" || k === "lh") { const x = r.les[key] = r.les[key] || {}; x[k === "ln" ? "n" : "h"] = val; }
+    else if (k === "d") { if (val) r.def[key] = val; else delete r.def[key]; }
+    refrescar();
+  });
+  $("#app").querySelectorAll("[data-re],[data-ro]").forEach(el => el.oninput = el.onchange = () => {
+    const key = el.dataset.re || el.dataset.ro, x = r.ries[key] = r.ries[key] || {};
+    if (el.dataset.re) x.e = el.value; else x.o = el.value;
+    refrescar();
+  });
+  $("#app").querySelectorAll("[data-seg]").forEach(g => g.querySelectorAll("button").forEach(b => b.onclick = () => {
+    r.morbilidad = b.dataset.v === "true"; const y = window.scrollY; pantallaDia(); window.scrollTo(0, y);
+  }));
+  $("#btn_gdia").onclick = () => guardarDia();
+  const sc = $("#btn_sincasos");
+  if (sc) sc.onclick = () => {
+    const t = totalesDia(r), vaciar = async () => { r.grilla = {}; r.les = {}; r.def = {}; r.morbilidad = true; await guardarDia(); };
+    if (t.casos || t.les || t.def) confirmar("Hay casos anotados. Se borran y el día queda sin casos.", "Guardar sin casos", vaciar); else vaciar();
+  };
+  const el = $("#btn_eliminar");
+  if (el) el.onclick = () => confirmar("Se elimina este día de este equipo. Si ya se cargó en la app, allá se conserva.", "Eliminar", async () => {
+    await DB.del("reg", r.uuid); Estado.regs = await leerRegs(); Estado.editando = null; pintar(); });
+}
+// Cambiar de punto o de día abre ese día si ya está guardado en el equipo. Un día
+// guardado nunca se muda a otro punto o fecha: se abre uno en blanco. Lo anotado en
+// uno todavía sin guardar sí se conserva (se eligió el punto después de anotar).
+function cambiarDia(key, dia) {
+  const c = cfgActiva(), r = Estado.editando, ya = Estado.regs.find(x => x.uuid === uuidDia(c, key, dia));
+  const p = puntosVid(c).find(x => x.key === key);
+  if (ya) Estado.editando = structuredClone(ya);
+  else if (r.uuid) Estado.editando = { uuid: null, cfg: cfgId(c), tipo_reg: "DIA", estado: "COMPLETA", punto_key: key, punto_id: p ? p.id : null,
+    punto_uuid: p ? p.uuid : null, dia, morbilidad: true, grilla: {}, les: {}, def: {}, ries: {} };
+  else { r.punto_key = key; r.punto_id = p ? p.id : null; r.punto_uuid = p ? p.uuid : null; r.dia = dia; }
+  const y = window.scrollY; pantallaDia(); window.scrollTo(0, y);
+}
+async function guardarDia() {
+  const c = cfgActiva(), r = Estado.editando, v = validarDia(c, r);
+  if (v.e.length) return;
+  const id = uuidDia(c, r.punto_key, r.dia);
+  if (r.uuid && r.uuid !== id) await DB.del("reg", r.uuid);     // cambió el punto o el día de uno guardado
+  const limpio = o => Object.fromEntries(Object.entries(o || {}).filter(([, n]) => ent(n) > 0).map(([k, n]) => [k, ent(n)]));
+  r.grilla = limpio(r.grilla); r.def = limpio(r.def);
+  r.les = Object.fromEntries(Object.entries(r.les || {}).filter(([, x]) => ent(x.n) > 0).map(([k, x]) => [k, { n: ent(x.n), h: ent(x.h) }]));
+  r.ries = Object.fromEntries(Object.entries(r.ries || {}).filter(([, x]) => x.e).map(([k, x]) => [k, { e: x.e, o: (x.o || "").trim() }]));
+  r.uuid = id; r.capturado_en = new Date().toISOString(); r.exportado_en = null;
+  await guardarReg(r); Estado.regs = await leerRegs();
+  Estado.editando = null; Estado.aviso = `Día ${ddmm(r.dia)} de ${nomPunto(c, r)} guardado: ${resumenDia(r)}. Recuerde enviarlo.`;
+  pintar(); window.scrollTo(0, 0);
+}
+
+/* ── Señales ──────────────────────────────────────────────────────────────── */
+function pantallaSenales() {
+  const c = cfgActiva(), cat = c.catalogos;
+  const sen = regsDe(c, "SENAL").sort((a, b) => (b.fecha + b.hora).localeCompare(a.fecha + a.hora));
+  const filas = sen.map(r => `<div class="it" data-ed="${esc(r.uuid)}" role="button" tabindex="0">
+      <div class="tx"><b>${esc(nombreCat(cat.senales, r.senal))}</b><span class="small muted">${ddmm(r.fecha)} ${esc(r.hora)} · ${esc(r.lugar)}${r.n_personas !== "" && r.n_personas != null ? ` · ${esc(r.n_personas)} personas` : ""}</span></div>
+      ${r.exportado_en ? `<span class="pill OK">Enviada</span>` : `<span class="pill PEND">Sin enviar</span>`}</div>`).join("");
+  $("#app").innerHTML = `${Estado.aviso ? `<div class="aviso ok">${esc(Estado.aviso)}</div>` : ""}
+    <div class="aviso warn">Lo grave, inusual o agrupado se avisa de inmediato por teléfono a la Regional. Anotarlo aquí no reemplaza ese aviso.</div>
+    <div class="card"><h2>Señales y rumores</h2><p class="small muted">${plural(sen.length, "señal", "señales")} · ${sen.filter(r => !r.exportado_en).length} sin enviar</p></div>
+    <div class="card lista">${filas || `<p class="muted">Todavía no hay señales. Toque <b>Nueva señal</b>.</p>`}</div>`;
+  Estado.aviso = null;
+  $("#app").querySelectorAll("[data-ed]").forEach(el => { const ab = () => { Estado.editando = structuredClone(Estado.regs.find(r => r.uuid === el.dataset.ed)); pintar(); window.scrollTo(0, 0); }; el.onclick = ab; el.onkeydown = e => { if (e.key === "Enter") ab(); }; });
+}
+function validarSenal(c, r) {
+  const e = [];
+  if (!r.fecha || !/^\d{2}:\d{2}$/.test(r.hora || "")) e.push("Anote la fecha y la hora en que se detectó la señal.");
+  else if (r.fecha + "T" + r.hora > fechaPA() + "T" + horaPA()) e.push("La hora de detección es futura.");
+  if (!(r.lugar || "").trim()) e.push("Anote dónde se detectó la señal.");
+  if (!r.senal) e.push("Elija la señal.");
+  if (!r.fuente) e.push("Elija la fuente.");
+  if (!esEntero(r.n_personas)) e.push("El número de personas va en entero, cero o más.");
+  if (traeCedula(c, r.lugar) || traeCedula(c, r.descripcion) || traeCedula(c, r.avisado_a)) e.push("La señal no lleva cédulas ni nombres de pacientes: bórrelos y guarde de nuevo.");
+  return { e, a: [] };
+}
+function pantallaSenal() {
+  const c = cfgActiva(), r = Estado.editando, cat = c.catalogos, bloq = !!r.exportado_en;
+  const guardada = Estado.regs.some(x => x.uuid === r.uuid), v = validarSenal(c, r), dis = bloq ? "disabled" : "";
+  const pts = puntosVid(c).filter(p => !p.aprobado || p.uuid === r.punto_uuid);
+  const opt = (lista, val, vacia) => `<option value="">${esc(vacia)}</option>` + lista.map(x => `<option value="${esc(x.codigo)}" ${String(x.codigo) === String(val) ? "selected" : ""}>${esc(x.nombre)}</option>`).join("");
+  const pk = r.punto_uuid ? "n" + r.punto_uuid : r.punto_id != null ? "p" + r.punto_id : "";
+  $("#app").innerHTML = `
+  <div class="card"><div class="btns" style="margin-top:0"><button class="btn" id="btn_volver" type="button">← Señales</button></div>
+    <h1>${guardada ? "Señal" : "Nueva señal"}</h1>
+    ${bloq ? `<div class="aviso info">Ya se envió: no se corrige aquí, porque en la app ya pudo cargarse. Si hay que corregirla, avise a Epidemiología.</div>` : ""}
+    <div class="row"><div><label class="f" for="s_fecha">Detectada: fecha</label><input type="date" id="s_fecha" data-v="fecha" value="${esc(r.fecha)}" max="${esc(fechaPA())}" ${dis}></div>
+    <div><label class="f" for="s_hora">Hora</label><input type="time" id="s_hora" data-v="hora" value="${esc(r.hora)}" ${dis}></div></div>
+    <label class="f" for="s_punto">Punto</label><select id="s_punto" ${dis}><option value="">Ninguno: es de la comunidad</option>${pts.map(p => `<option value="${esc(p.key)}" ${p.key === pk ? "selected" : ""}>${esc(p.tipo_nombre + ": " + p.nombre)}</option>`).join("")}</select>
+    <label class="f" for="s_lugar">Dónde (comunidad, albergue, sector)</label><input type="text" id="s_lugar" data-v="lugar" value="${esc(r.lugar)}" ${dis}>
+    <label class="f" for="s_senal">Señal</label><select id="s_senal" data-v="senal" ${dis}>${opt(cat.senales, r.senal, "Elija")}</select>
+    <div class="row"><div><label class="f" for="s_n">Personas afectadas</label><input type="number" id="s_n" data-v="n_personas" inputmode="numeric" min="0" step="1" value="${esc(r.n_personas)}" ${dis}></div>
+    <div><label class="f" for="s_fuente">Fuente</label><select id="s_fuente" data-v="fuente" ${dis}>${opt(cat.fuentes, r.fuente, "Elija")}</select></div></div>
+    <label class="f" for="s_desc">Qué se observó (sin nombres ni cédulas)</label><textarea id="s_desc" data-v="descripcion" ${dis}>${esc(r.descripcion)}</textarea>
+    <div class="row"><div><label class="f" for="s_av">Se avisó a</label><input type="text" id="s_av" data-v="avisado_a" value="${esc(r.avisado_a)}" ${dis}></div>
+    <div><label class="f" for="s_avh">Hora del aviso</label><input type="time" id="s_avh" data-v="avisado_hora" value="${esc(r.avisado_hora)}" ${dis}></div></div></div>
+  <div class="card"><div id="val_sen">${bloq ? "" : avisos(v)}</div>
+    <div class="btns">${bloq ? "" : `<button class="btn pri" id="btn_gsen" type="button" ${v.e.length ? "disabled" : ""}>Guardar la señal</button>`}
+    ${guardada ? `<button class="btn bad" id="btn_eliminar" type="button">Eliminar de este equipo</button>` : ""}</div></div>`;
+  $("#btn_volver").onclick = () => { Estado.editando = null; pintar(); };
+  const refrescar = () => { const v = validarSenal(c, r); $("#val_sen").innerHTML = avisos(v); const b = $("#btn_gsen"); if (b) b.disabled = v.e.length > 0; };
+  $("#app").querySelectorAll("[data-v]").forEach(el => el.oninput = el.onchange = () => { r[el.dataset.v] = el.value; refrescar(); });
+  $("#s_punto").onchange = e => { const p = puntosVid(c).find(x => x.key === e.target.value); r.punto_id = p ? p.id : null; r.punto_uuid = p ? p.uuid : null; };
+  const g = $("#btn_gsen");
+  if (g) g.onclick = async () => {
+    if (validarSenal(c, r).e.length) return;
+    ["lugar", "descripcion", "avisado_a"].forEach(k => { r[k] = (r[k] || "").trim(); });
+    r.exportado_en = null; await guardarReg(r); Estado.regs = await leerRegs();
+    Estado.editando = null; Estado.aviso = "Señal guardada en este equipo. Recuerde enviarla."; pintar(); window.scrollTo(0, 0);
+  };
+  const el = $("#btn_eliminar");
+  if (el) el.onclick = () => confirmar("Se elimina esta señal de este equipo. Si ya se cargó en la app, allá se conserva.", "Eliminar", async () => {
+    await DB.del("reg", r.uuid); Estado.regs = await leerRegs(); Estado.editando = null; pintar(); });
+}
+
+/* ── Puntos ───────────────────────────────────────────────────────────────── */
+function pantallaPuntos() {
+  const c = cfgActiva(), pts = puntosVid(c);
+  const fila = p => `<div class="it" ${p.nuevo ? `data-ed="${esc(p.uuid)}" role="button" tabindex="0"` : ""}><div class="tx"><b>${esc(p.nombre)}</b><span class="small muted">${esc(p.tipo_nombre)}</span></div>
+      ${!p.nuevo ? "" : p.aprobado ? `<span class="pill OK">Aprobado</span>` : `<span class="pill PEND">Pendiente de aprobación</span>`}</div>`;
+  $("#app").innerHTML = `${Estado.aviso ? `<div class="aviso ok">${esc(Estado.aviso)}</div>` : ""}
+    <div class="card"><h2>Puntos de vigilancia</h2><p class="small muted">Los de la configuración que mandó Epidemiología. Si la brigada atiende en un lugar que no está en la lista, agréguelo con <b>Punto nuevo</b>: viaja con el envío y Coordinación lo aprueba al cargarlo. Cuando llegue aprobado en una configuración nueva, se usa el de la lista.</p></div>
+    <div class="card lista">${pts.map(fila).join("") || `<p class="muted">Esta configuración no trae puntos.</p>`}</div>`;
+  Estado.aviso = null;
+  $("#app").querySelectorAll("[data-ed]").forEach(el => { const ab = () => { Estado.editando = structuredClone(Estado.regs.find(r => r.uuid === el.dataset.ed)); pintar(); window.scrollTo(0, 0); }; el.onclick = ab; el.onkeydown = e => { if (e.key === "Enter") ab(); }; });
+}
+function validarPunto(c, r) {
+  const e = [];
+  if (!r.tipo) e.push("Elija el tipo de punto.");
+  if ((r.nombre || "").trim().length < 3) e.push("Anote el nombre del punto (por ejemplo, ALBERGUE ESCUELA DE SAN PABLO).");
+  if (traeCedula(c, r.nombre)) e.push("El nombre del punto no lleva cédulas.");
+  if (!esEntero(r.poblacion)) e.push("Las personas alojadas van en entero, cero o más.");
+  if (r.tipo && puntosVid(c).some(p => p.uuid !== r.uuid && p.tipo === r.tipo && normNom(p.nombre) === normNom(r.nombre))) e.push("Ya hay un punto de ese tipo con ese nombre en la lista.");
+  return { e, a: [] };
+}
+function pantallaPunto() {
+  const c = cfgActiva(), r = Estado.editando, bloq = !!r.exportado_en, dis = bloq ? "disabled" : "";
+  const guardado = Estado.regs.some(x => x.uuid === r.uuid), v = validarPunto(c, r);
+  const usado = Estado.regs.some(x => regCfg(x) === cfgId(c) && x.punto_uuid === r.uuid);
+  const geo = c.geografia || [], distritos = [...new Set(geo.map(g => g.d))].sort(), corrs = geo.filter(g => g.d === r.distrito);
+  $("#app").innerHTML = `
+  <div class="card"><div class="btns" style="margin-top:0"><button class="btn" id="btn_volver" type="button">← Puntos</button></div>
+    <h1>${guardado ? "Punto del terreno" : "Punto nuevo"}</h1>
+    ${bloq ? `<div class="aviso info">Ya se envió y queda pendiente de que Coordinación lo apruebe. No se corrige aquí.</div>` : `<p class="small muted">Queda pendiente de que Coordinación lo apruebe al cargar el envío. Mientras tanto, ya puede capturar sus días.</p>`}
+    <label class="f">Tipo</label>${seg("ptipo", (c.catalogos.tipos_punto || []).map(t => [t.codigo, t.nombre]), r.tipo)}
+    <label class="f" for="p_nombre">Nombre</label><input type="text" id="p_nombre" data-v="nombre" value="${esc(r.nombre)}" placeholder="ALBERGUE ESCUELA DE SAN PABLO" ${dis}>
+    <label class="f" for="p_pob">Personas alojadas (solo albergues)</label><input type="number" id="p_pob" data-v="poblacion" inputmode="numeric" min="0" step="1" value="${esc(r.poblacion)}" ${dis}>
+    ${geo.length ? `<div class="row"><div><label class="f" for="p_dis">Distrito</label><select id="p_dis" ${dis}><option value="">Elija</option>${distritos.map(d => `<option ${d === r.distrito ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
+    <div><label class="f" for="p_cor">Corregimiento</label><select id="p_cor" ${dis}><option value="">Elija</option>${corrs.map(g => `<option value="${esc(g.cod)}" ${g.cod === r.codigo_geo ? "selected" : ""}>${esc(g.c)}</option>`).join("")}</select></div></div>` : ""}</div>
+  <div class="card"><div id="val_pto">${bloq ? "" : avisos(v)}</div>
+    <div class="btns">${bloq ? "" : `<button class="btn pri" id="btn_gpto" type="button" ${v.e.length ? "disabled" : ""}>Guardar el punto</button>`}
+    ${guardado && !usado ? `<button class="btn bad" id="btn_eliminar" type="button">Eliminar</button>` : ""}</div>
+    ${usado ? `<p class="small muted">Tiene días o señales guardados: no se puede eliminar.</p>` : ""}</div>`;
+  $("#btn_volver").onclick = () => { Estado.editando = null; pintar(); };
+  const refrescar = () => { const v = validarPunto(c, r); $("#val_pto").innerHTML = avisos(v); const b = $("#btn_gpto"); if (b) b.disabled = v.e.length > 0; };
+  $("#app").querySelectorAll("[data-v]").forEach(el => el.oninput = el.onchange = () => { r[el.dataset.v] = el.value; refrescar(); });
+  if (!bloq) $("#app").querySelectorAll("[data-seg]").forEach(g => g.querySelectorAll("button").forEach(b => b.onclick = () => {
+    r.tipo = b.dataset.v; g.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); refrescar(); }));
+  const ds = $("#p_dis"); if (ds) ds.onchange = e => { r.distrito = e.target.value; r.codigo_geo = ""; r.corregimiento = ""; const y = window.scrollY; pantallaPunto(); window.scrollTo(0, y); };
+  const cs = $("#p_cor"); if (cs) cs.onchange = e => { const g = geo.find(z => z.cod === e.target.value); r.codigo_geo = g ? g.cod : ""; r.corregimiento = g ? g.c : ""; };
+  const g = $("#btn_gpto");
+  if (g) g.onclick = async () => {
+    if (validarPunto(c, r).e.length) return;
+    r.nombre = normNom(r.nombre); r.exportado_en = null;
+    await guardarReg(r); Estado.regs = await leerRegs();
+    Estado.editando = null; Estado.aviso = `Punto ${r.nombre} guardado. Ya aparece para capturar sus días.`; pintar(); window.scrollTo(0, 0);
+  };
+  const el = $("#btn_eliminar");
+  if (el) el.onclick = () => confirmar("Se elimina este punto de este equipo.", "Eliminar", async () => {
+    await DB.del("reg", r.uuid); Estado.regs = await leerRegs(); Estado.editando = null; pintar(); });
+}
+
+/* ── Enviar a la app ──────────────────────────────────────────────────────── */
+function diaAPaquete(c, r) {
+  const cat = c.catalogos, consolidado = [], lesiones = [], riesgos = [];
+  if (r.morbilidad !== false) {
+    cat.anexo1.forEach(f => cat.grupos_edad.forEach(g => cat.sexos.forEach(s => {
+      const n = ent(r.grilla[f.codigo + "|" + g.codigo + "|" + s.codigo]);
+      if (n) consolidado.push({ sindrome: f.codigo, grupo_edad: g.codigo, sexo: s.codigo, casos: n }); })));
+    cat.mecanismos.forEach(m => { const x = r.les[m.codigo] || {}, n = ent(x.n);
+      if (n) lesiones.push({ tipo: "LESION", categoria: m.codigo, cantidad: n, hospitalizados: ent(x.h) }); });
+    cat.relacion_def.forEach(d => { const n = ent(r.def[d.codigo]);
+      if (n) lesiones.push({ tipo: "DEFUNCION", categoria: d.codigo, cantidad: n, hospitalizados: 0 }); });
+  }
+  cat.riesgos.forEach(x => { const v = r.ries[x.codigo]; if (v && v.e) riesgos.push({ rubro: x.codigo, estado: v.e, observacion: (v.o || "").trim() }); });
+  const o = { punto_id: r.punto_id ?? null, dia: r.dia, capturado_en: r.capturado_en, morbilidad: r.morbilidad !== false, consolidado, lesiones, riesgos };
+  if (r.punto_uuid) o.punto_uuid = r.punto_uuid;
+  return o;
+}
+function senalAPaquete(r) {
+  const o = { uuid: r.uuid, punto_id: r.punto_id ?? null, detectada_en: r.fecha + "T" + r.hora, lugar: r.lugar, senal: r.senal,
+    n_personas: r.n_personas === "" || r.n_personas == null ? null : Number(r.n_personas), fuente: r.fuente, descripcion: r.descripcion || "",
+    avisado_a: r.avisado_a || "", avisado_en: /^\d{2}:\d{2}$/.test(r.avisado_hora || "") ? r.fecha + "T" + r.avisado_hora : null };
+  if (r.punto_uuid) o.punto_uuid = r.punto_uuid;
+  return o;
+}
+const puntoAPaquete = r => ({ uuid: r.uuid, tipo: r.tipo, nombre: r.nombre, poblacion: r.poblacion === "" || r.poblacion == null ? null : Number(r.poblacion),
+  distrito: r.distrito || null, corregimiento: r.corregimiento || null, codigo_geo: r.codigo_geo || null, creado_en: r.creado_en });
+// El paquete que lee vid_leer_paquete(): mismo esquema y misma huella.
+async function paqueteVid(c, dias, sen, pts) {
+  const p = { schema_id: c.paquete.schema_id, schema_version: c.paquete.schema_version, evento_id: c.evento.id, evento: c.evento.nombre,
+    unidad: c.unidad, formulario_generado_en: c.generado, exportado_en: new Date().toISOString(),
+    dias: dias.map(r => diaAPaquete(c, r)), senales: sen.map(senalAPaquete) };
+  if (pts.length) p.puntos_nuevos = pts.map(puntoAPaquete);
+  p.payload_sha256 = await sha256hex(canon(p));
+  return p;
+}
+async function sobreVid(c, dias, sen) {
+  const usados = new Set(dias.concat(sen).map(r => r.punto_uuid).filter(Boolean));
+  const pts = regsDe(c, "PUNTO").filter(p => usados.has(p.uuid) || !p.exportado_en);
+  const paq = await paqueteVid(c, dias, sen, pts);
+  return { pts, sobre: await sellarSobre(c, paq, dias.length + sen.length, paq.exportado_en, { referencia: String(c.evento.id), ref: cfgId(c) }) };
+}
+function pantallaEnviarVid() {
+  const c = cfgActiva(), dias = regsDe(c, "DIA"), sen = regsDe(c, "SENAL");
+  const pd = dias.filter(r => !r.exportado_en), ps = sen.filter(r => !r.exportado_en), pp = regsDe(c, "PUNTO").filter(r => !r.exportado_en);
+  const hayPend = pd.length + ps.length + pp.length > 0;
+  $("#app").innerHTML = `<div class="card"><h2>Enviar a Vigilancia ante desastres</h2>
+    <p>Sin enviar: ${plural(pd.length, "día", "días")}, ${plural(ps.length, "señal", "señales")}${pp.length ? `, ${plural(pp.length, "punto nuevo", "puntos nuevos")}` : ""}.
+       Ya enviados: ${dias.length - pd.length} días y ${sen.length - ps.length} señales.</p>
+    <p class="small muted">El archivo sale cifrado: solo la app lo puede abrir. Mándelo por WhatsApp o correo a Epidemiología, que lo carga en la pestaña Sin conexión del módulo. Cargarlo dos veces no duplica nada; si un día ya estaba guardado allá con otro contenido, Coordinación decide cuál queda.</p>
+    <div id="msg"></div>
+    <div class="btns"><button class="btn pri" id="btn_env" type="button" ${hayPend ? "" : "disabled"}>Enviar lo pendiente</button>
+    <button class="btn" id="btn_env_todo" type="button" ${dias.length + sen.length ? "" : "disabled"}>Volver a enviar todo</button></div></div>`;
+  const env = async (ld, ls) => {
+    try {
+      const { pts, sobre } = await sobreVid(c, ld, ls);
+      const nombre = `vid_${c.unidad}_${fechaPA()}_${ld.length}dias_${ls.length}senales.json`.replace(/[^A-Za-z0-9_.-]/g, "_");
+      const res = await entregarArchivo(nombre, JSON.stringify(sobre));
+      if (res === "cancelado") return;
+      const ahora = new Date().toISOString();
+      for (const r of ld.concat(ls, pts)) { r.exportado_en = ahora; await guardarReg(r); }
+      Estado.regs = await leerRegs();
+      Estado.aviso = res === "compartido" ? `Se compartió el archivo: ${plural(ld.length, "día", "días")} y ${plural(ls.length, "señal", "señales")}.` : `Se descargó ${nombre}. Mándelo a Epidemiología.`;
+      Estado.tab = "dias"; pintar();
+    } catch (err) { $("#msg").innerHTML = `<div class="aviso bad">No se pudo preparar el archivo: ${esc(err.message || err)}</div>`; }
+  };
+  $("#btn_env").onclick = () => env(pd, ps);
+  $("#btn_env_todo").onclick = () => env(dias, sen);
 }
 
 iniciar();
