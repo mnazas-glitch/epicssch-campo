@@ -20,7 +20,8 @@
   Tres cuestionarios sobre el mismo motor (decisión T1, 15-oct-2026): la entrevista
   de brote (tipo BROTE), el día del punto con sus señales de la vigilancia
   intensificada ante desastres (tipo VID) y la investigación perifocal de
-  Vacunación EIP (tipo PERIFOCO: caso índice y viviendas con sus miembros).
+  Vacunación EIP (tipo PERIFOCO: caso índice y viviendas con sus miembros; tipo
+  VACUNACION: registro de vacunación por persona, con sus dosis, desde el 16-oct-2026).
   Fuente: EPICSSCH_APP/tablero_campo/ (se publica copiando esta carpeta).
 -->
 <style>
@@ -118,7 +119,7 @@ details.sind[open] summary::after{content:"\2212"}
 /* ============================================================================
    MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
    ========================================================================== */
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.0";
 const CFG_SCHEMA = "epicssch.campo.config";
 const PKG_SCHEMA = "epicssch.campo.paquete";
 const CIF_SCHEMA = "epicssch.campo.cifrado";
@@ -142,7 +143,7 @@ function canon(v) {           // JSON con claves ordenadas: misma huella en cual
 // Los registros viejos de Brotes no traen cfg.
 const cfgId = c => c ? (c.ref || c.codbrote) : null;
 const regCfg = r => r.cfg || r.codbrote;
-const etiquetaCfg = c => c.tipo === "VID" ? "Desastre · " + c.unidad : c.tipo === "PERIFOCO" ? "Perifoco · " + c.localidad.comunidad : c.codbrote;
+const etiquetaCfg = c => c.tipo === "VID" ? "Desastre · " + c.unidad : c.tipo === "PERIFOCO" ? "Perifoco · " + c.localidad.comunidad : c.tipo === "VACUNACION" ? "Vacunación · " + c.jornada.instalacion.abrev : c.codbrote;
 async function sha256hex(txt) { const h = await crypto.subtle.digest("SHA-256", te.encode(txt)); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
 
 // ── IndexedDB (con respaldo en memoria si el navegador la niega) ──────────────
@@ -287,7 +288,8 @@ function avisoInstalar() {
 const TABS = {
   BROTE: [["lista", "Entrevistas"], ["analisis", "Análisis preliminar"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]],
   VID: [["dias", "Días"], ["senales", "Señales"], ["puntos", "Puntos"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]],
-  PERIFOCO: [["caso", "Caso índice"], ["viviendas", "Viviendas"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]]
+  PERIFOCO: [["caso", "Caso índice"], ["viviendas", "Viviendas"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]],
+  VACUNACION: [["personas", "Personas"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]]
 };
 function pintarTabs(c) {
   const t = c ? (TABS[c.tipo] || TABS.BROTE) : [["brotes", "Brotes y eventos"]];
@@ -299,6 +301,7 @@ function ponerFab(c) {
   let txt = null;
   if (c && !Estado.editando) {
     if (c.tipo === "VID") txt = { dias: "+ Capturar un día", senales: "+ Nueva señal", puntos: "+ Punto nuevo" }[Estado.tab] || null;
+    else if (c.tipo === "VACUNACION") txt = Estado.tab === "personas" ? "+ Persona" : null;
     else if (c.tipo === "PERIFOCO") txt = Estado.tab === "viviendas" ? "+ Nueva vivienda" : (Estado.tab === "caso" && !regsDe(c, "CASO").length) ? "+ Caso índice" : null;
     else if (Estado.tab === "lista") txt = "+ Nueva entrevista";
   }
@@ -314,11 +317,13 @@ async function pintar() {
   $("#hdr_brote").textContent = c ? etiquetaCfg(c) : "";
   if (!bloq || !desbloqueado) { $("#fab").classList.add("oculto"); return bloq ? pantallaAbrir() : pantallaCrearClave(); }
   pintarTabs(c); ponerFab(c);
-  if (Estado.editando) return c.tipo === "VID" ? pantallaVidEdicion() : c.tipo === "PERIFOCO" ? pantallaPfEdicion() : pantallaEntrevista();
+  if (Estado.editando) return c.tipo === "VID" ? pantallaVidEdicion() : c.tipo === "PERIFOCO" ? pantallaPfEdicion() : c.tipo === "VACUNACION" ? pantallaVcEdicion() : pantallaEntrevista();
   const P = c && c.tipo === "VID"
     ? { dias: pantallaDias, senales: pantallaSenales, puntos: pantallaPuntos, enviar: pantallaEnviarVid, brotes: pantallaBrotes }
     : c && c.tipo === "PERIFOCO"
     ? { caso: pantallaPfCaso, viviendas: pantallaPfViviendas, enviar: pantallaEnviarPf, brotes: pantallaBrotes }
+    : c && c.tipo === "VACUNACION"
+    ? { personas: pantallaVcPersonas, enviar: pantallaEnviarVc, brotes: pantallaBrotes }
     : { lista: pantallaLista, analisis: pantallaAnalisis, enviar: pantallaEnviar, brotes: pantallaBrotes };
   P[Estado.tab]();
 }
@@ -365,13 +370,14 @@ function confirmar(texto, boton, fn) {      // confirmación dentro de la págin
 
 /* ── Brotes y eventos cargados en el equipo ───────────────────────────────── */
 function pantallaBrotes() {
-  const filas = Estado.cfgs.map(c => `<div class="it"><div class="tx"><b>${esc(c.tipo === "VID" || c.tipo === "PERIFOCO" ? c.nombre : c.codbrote)}</b><span class="small muted">${c.tipo === "VID"
+  const filas = Estado.cfgs.map(c => `<div class="it"><div class="tx"><b>${esc(c.tipo === "VID" || c.tipo === "PERIFOCO" || c.tipo === "VACUNACION" ? c.nombre : c.codbrote)}</b><span class="small muted">${c.tipo === "VID"
       ? `Vigilancia ante desastres · Unidad ${esc(c.unidad)} · ${(c.puntos || []).length} puntos`
       : c.tipo === "PERIFOCO" ? `Perifoco · ${esc(c.evento.label)} · ${esc(c.localidad.corregimiento)} · ${esc(c.ref)}`
+      : c.tipo === "VACUNACION" ? `Registro de vacunación · ${esc(c.jornada.modalidad.label)} · ${esc(c.ref)}`
       : `${esc(c.nombre || c.evento)} · ${esc(c.evento)}`}</span></div>
      ${cfgId(c) === Estado.activo ? `<span class="pill">Activo</span>` : `<button class="btn" data-act="${esc(cfgId(c))}" type="button">Usar</button>`}</div>`).join("");
   $("#app").innerHTML = `${avisoInstalar()}<div class="card"><h2>Brotes y eventos en este equipo</h2>
-    <p class="muted small">Cargue el archivo de configuración que le manda Epidemiología por WhatsApp o correo: el de un brote sale de Gestión de Brotes (pestaña Tablero de campo); el de un desastre, de Vigilancia ante desastres (pestaña Sin conexión); el de un perifoco, de PAICSSCH, Vacunación EIP (pestaña Perifoco sin conexión).</p>
+    <p class="muted small">Cargue el archivo de configuración que le manda Epidemiología por WhatsApp o correo: el de un brote sale de Gestión de Brotes (pestaña Tablero de campo); el de un desastre, de Vigilancia ante desastres (pestaña Sin conexión); el de un perifoco, de PAICSSCH (Perifoco sin conexión); el de una jornada de vacunación, también de PAICSSCH (Vacunación sin conexión).</p>
     <div class="lista">${filas || `<p class="muted">Todavía no hay ningún brote ni evento cargado.</p>`}</div>
     <div id="msg"></div><div class="btns"><button class="btn pri" id="btn_cargar" type="button">Cargar archivo del brote o del evento</button></div></div>
     ${Estado.cfgs.some(c => c.tipo !== "VID") ? `<div class="card"><h2>Entrevistador</h2><label class="f" for="entrev">Nombre de quien entrevista en este equipo</label><input type="text" id="entrev" value="${esc(Estado.entrevistador)}"></div>` : ""}
@@ -393,13 +399,16 @@ $("#file_cfg").onchange = async e => {
     } else if (c.tipo === "PERIFOCO") {
       if (!c.ref || !c.evento || !c.evento.code || !c.localidad || !Array.isArray(c.sintomas) || !c.paquete)
         throw new Error("Al archivo del perifoco le faltan datos: descárguelo de nuevo en la app.");
+    } else if (c.tipo === "VACUNACION") {
+      if (!c.ref || !c.jornada || !c.jornada.instalacion || !c.catalogos || !Array.isArray(c.catalogos.vacunas) || !c.paquete)
+        throw new Error("Al archivo de la jornada le faltan datos: descárguelo de nuevo en la app.");
     } else if (!c.codbrote) throw new Error("Al archivo le falta el código del brote.");
     await crypto.subtle.importKey("spki", unb64(c.clave.spki), { name: "RSA-OAEP", hash: "SHA-1" }, false, ["encrypt"]);
     const previo = Estado.cfgs.find(x => cfgId(x) === cfgId(c));
     Estado.cfgs = Estado.cfgs.filter(x => cfgId(x) !== cfgId(c)).concat([c]);
     Estado.activo = cfgId(c);
     await DB.put("cfg", Estado.cfgs, "brotes"); await DB.put("cfg", Estado.activo, "activo");
-    Estado.tab = ""; Estado.aviso = (c.tipo === "VID" ? `Evento ${c.nombre}, unidad ${c.unidad}, cargado` : c.tipo === "PERIFOCO" ? `${c.nombre} cargado` : `Brote ${c.codbrote} cargado`) + (previo ? " (actualizado)." : "."); pintar();
+    Estado.tab = ""; Estado.aviso = (c.tipo === "VID" ? `Evento ${c.nombre}, unidad ${c.unidad}, cargado` : c.tipo === "PERIFOCO" || c.tipo === "VACUNACION" ? `${c.nombre} cargado` : `Brote ${c.codbrote} cargado`) + (previo ? " (actualizado)." : "."); pintar();
   } catch (err) { const m = $("#msg"); if (m) m.innerHTML = `<div class="aviso bad">${esc(err.message || "No se pudo leer el archivo.")}</div>`; }
 };
 
@@ -425,6 +434,7 @@ $("#btn_nueva").onclick = () => {
   const c = cfgActiva();
   if (c.tipo === "VID") return nuevoVid(c);
   if (c.tipo === "PERIFOCO") return nuevoPf(c, Estado.tab === "viviendas" ? "VIVIENDA" : "CASO");
+  if (c.tipo === "VACUNACION") return nuevoVc(c);
   Estado.editando = { uuid: uuid(), codbrote: c.codbrote, estado: "BORRADOR", rol: null, enfermo: null, entrevistador: Estado.entrevistador,
     fecha_entrevista: hoyISO(), hora_entrevista: ahoraHM(), creado: new Date().toISOString(),
     persona: {}, lugar: {}, tiempo: {}, clinica: { sintomas: {} }, exposiciones: {}, laboratorio: {}, observaciones: "" };
@@ -1352,9 +1362,9 @@ async function sobrePf(c, regs) {
 function pantallaEnviarPf() {
   const c = cfgActiva(), regs = Estado.regs.filter(r => regCfg(r) === cfgId(c));
   const comp = regs.filter(r => r.estado === "COMPLETA"), pend = comp.filter(r => !r.exportado_en), borr = regs.filter(r => r.estado === "BORRADOR");
-  $("#app").innerHTML = `<div class="card"><h2>Enviar a Vacunación EIP</h2>
+  $("#app").innerHTML = `<div class="card"><h2>Enviar a PAICSSCH</h2>
     <p>${plural(pend.length, "registro completo sin enviar", "registros completos sin enviar")} · ${comp.length - pend.length} ya enviados · ${plural(borr.length, "borrador", "borradores")} (no se envían).</p>
-    <p class="small muted">Cada vivienda viaja con sus personas. El archivo sale cifrado: solo la app lo puede abrir. Mándelo por WhatsApp o correo a Epidemiología, que lo carga en PAICSSCH, Vacunación EIP, pestaña Perifoco sin conexión. Cargarlo dos veces no duplica nada.</p>
+    <p class="small muted">Cada vivienda viaja con sus personas. El archivo sale cifrado: solo la app lo puede abrir. Mándelo por WhatsApp o correo a Epidemiología, que lo carga en PAICSSCH, Perifoco sin conexión. Cargarlo dos veces no duplica nada.</p>
     <div id="msg"></div>
     <div class="btns"><button class="btn pri" id="btn_env" type="button" ${pend.length ? "" : "disabled"}>Enviar los ${pend.length} sin enviar</button>
     <button class="btn" id="btn_env_todo" type="button" ${comp.length ? "" : "disabled"}>Volver a enviar todo (${comp.length})</button></div></div>`;
@@ -1369,6 +1379,223 @@ function pantallaEnviarPf() {
       Estado.regs = await leerRegs();
       Estado.aviso = res === "compartido" ? `Se compartió el archivo con ${plural(lista.length, "registro", "registros")}.` : `Se descargó ${nombre}. Mándelo a Epidemiología.`;
       Estado.tab = "viviendas"; pintar();
+    } catch (err) { $("#msg").innerHTML = `<div class="aviso bad">No se pudo preparar el archivo: ${esc(err.message || err)}</div>`; }
+  };
+  $("#btn_env").onclick = () => env(pend);
+  $("#btn_env_todo").onclick = () => env(comp);
+}
+
+/* ============================================================================
+   VACUNACIÓN (tipo VACUNACION) — registro de vacunación del PAI, 16-oct-2026
+   Reemplaza al formulario HTML «Formulario en jornada». Las reglas son las de
+   funciones_vacunacion_campo.R (vc_errores), las mismas del formulario:
+   - nombre y apellido; número de identificación si el tipo no es «No tiene»;
+   - fecha de nacimiento y sexo; nacimiento no posterior al registro;
+   - embarazada: semanas de gestación;
+   - cada dosis: vacuna y dosis; si se aplicó hoy, fecha y lote.
+   Catálogos: los del formulario (catalogos_pai_vacunacion.json), en la configuración.
+   ========================================================================== */
+const vcCat = (c, l) => (c.catalogos && c.catalogos[l]) || [];
+const vcLab = (c, l, code) => (vcCat(c, l).find(x => x.code === code) || { label: code || "" }).label;
+function vcSelect(c, k, rot, lista, v, opciones) {
+  const ops = opciones || vcCat(c, lista);
+  return `<label class="f" for="${idDe(k)}">${esc(rot)}</label><select id="${idDe(k)}" data-k="${k}"><option value="">Elija</option>${ops.map(x =>
+    `<option value="${esc(x.code)}" ${x.code === v ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select>`;
+}
+function vcEdad(fnac, ref) {
+  if (!fnac) return null;
+  const a = new Date(fnac + "T00:00:00"), b = new Date((ref || hoyISO()) + "T00:00:00");
+  const dias = Math.floor((b - a) / 86400000); if (dias < 0) return null;
+  let meses = (b.getFullYear() - a.getFullYear()) * 12 + b.getMonth() - a.getMonth(); if (b.getDate() < a.getDate()) meses--;
+  if (dias < 31) return { valor: dias, unidad: "dias" };
+  if (meses < 12) return { valor: meses, unidad: "meses" };
+  return { valor: Math.floor(meses / 12), unidad: "años" };
+}
+const vcAnios = d => d.edad_unidad === "años" ? Number(d.edad_valor) : 0;
+function nuevaDosisVc(c) {
+  return { dosis_uuid: uuid(), vacuna: "", dosis: "", fuente_dato: "aplicada_actividad", aplicada_durante_actividad: true,
+    fecha_aplicacion: c.jornada.fecha || hoyISO(), lote: "", fabricante: "", sitio_aplicacion: "", via_administracion: "",
+    vacunador: Estado.entrevistador, observacion: "" };
+}
+function nuevoVc(c) {
+  Estado.editando = { uuid: uuid(), cfg: cfgId(c), tipo_reg: "PERSONA", estado: "BORRADOR", entrevistador: Estado.entrevistador,
+    fecha: c.jornada.fecha || hoyISO(), creado: new Date().toISOString(),
+    persona: { tipo_identificacion: "cedula", numero_identificacion: "", nombre: "", apellido: "", nombre_madre: "", telefono: "" },
+    demo: { fecha_nacimiento: "", edad_valor: "", edad_unidad: "años", sexo: null, tipo_paciente: "", embarazada: null, semanas_gestacion: "" },
+    proc: { distrito: c.jornada.distrito || "", corregimiento: c.jornada.corregimiento || "", cod_geo: "", comunidad: c.jornada.comunidad || "", direccion: "" },
+    condiciones: [], antecedente: { verificado: false, fuente: "", carnet: false, esquema_completo: "", observacion: "" },
+    dosis: [nuevaDosisVc(c)], motivo_no_vacunacion: "", observaciones: "" };
+  Estado.vcAbiertos = new Set([Estado.editando.dosis[0].dosis_uuid]);
+  pintar(); window.scrollTo(0, 0);
+}
+function validarVc(c, r) {
+  const e = [], a = [], p = r.persona, d = r.demo;
+  if (!String(p.nombre || "").trim() || !String(p.apellido || "").trim()) e.push("Faltan el nombre y el apellido.");
+  if (p.tipo_identificacion && p.tipo_identificacion !== "no_tiene" && !String(p.numero_identificacion || "").trim()) e.push("Falta el número de identificación.");
+  if (p.tipo_identificacion === "cedula" && p.numero_identificacion && !CEDULA_RE.test(p.numero_identificacion)) a.push("La cédula no tiene el formato habitual (por ejemplo 4-123-456).");
+  if ((p.tipo_identificacion === "no_tiene" || (d.edad_unidad !== "años" || vcAnios(d) < 18)) && !String(p.nombre_madre || "").trim()) a.push("Anote el nombre de la madre: es un menor o no tiene identificación.");
+  if (!d.fecha_nacimiento) e.push("Falta la fecha de nacimiento.");
+  else if (d.fecha_nacimiento > (r.fecha || hoyISO())) e.push("La fecha de nacimiento es posterior a la del registro.");
+  if (!vcCat(c, "sexo").some(x => x.code === d.sexo)) e.push("Falta el sexo.");
+  if (d.embarazada === "si" && !String(d.semanas_gestacion || "").trim()) e.push("Faltan las semanas de gestación.");
+  (r.dosis || []).forEach((x, i) => {
+    const n = i + 1;
+    if (!x.vacuna || !x.dosis) e.push(`Dosis ${n}: elija la vacuna y la dosis.`);
+    if (x.aplicada_durante_actividad) {
+      if (!x.fecha_aplicacion) e.push(`Dosis ${n}: falta la fecha de aplicación.`);
+      if (!String(x.lote || "").trim()) e.push(`Dosis ${n}: falta el lote.`);
+      if (x.fecha_aplicacion && x.fecha_aplicacion > hoyISO()) e.push(`Dosis ${n}: la fecha de aplicación es futura.`);
+    }
+    const vac = vcCat(c, "vacunas").find(v => v.code === x.vacuna);
+    if (vac && x.via_administracion && vac.vias && !vac.vias.includes(x.via_administracion)) a.push(`Dosis ${n}: la vía no es la habitual para ${vac.label}.`);
+    if (d.fecha_nacimiento && x.fecha_aplicacion && x.fecha_aplicacion < d.fecha_nacimiento) e.push(`Dosis ${n}: aplicada antes del nacimiento.`);
+  });
+  if (!(r.dosis || []).some(x => x.aplicada_durante_actividad) && !r.motivo_no_vacunacion) a.push("No hay dosis aplicada hoy: anote el motivo de no vacunación.");
+  return { e, a };
+}
+function cabeceraVc(c) {
+  const j = c.jornada;
+  return `<div class="card"><h1>${esc(c.nombre)}</h1><p class="muted">${esc(j.instalacion.nombre)} · ${esc(j.modalidad.label)} · ${esc(j.contexto_uso.label)}</p>
+    <p class="small muted">${esc([j.comunidad, j.corregimiento, j.distrito].filter(Boolean).join(", "))} · ${esc(c.ref)}</p></div>`;
+}
+function pantallaVcPersonas() {
+  const c = cfgActiva(), pp = regsDe(c, "PERSONA");
+  const aplicadas = pp.reduce((n, r) => n + (r.dosis || []).filter(x => x.aplicada_durante_actividad).length, 0);
+  $("#app").innerHTML = `${Estado.aviso ? `<div class="aviso ok">${esc(Estado.aviso)}</div>` : ""}${avisoInstalar()}${cabeceraVc(c)}
+    <div class="card"><p>${plural(pp.length, "persona registrada", "personas registradas")} · ${plural(aplicadas, "dosis aplicada", "dosis aplicadas")} en esta jornada.</p></div>
+    <div class="card lista">${pp.map(r => {
+      const ap = (r.dosis || []).filter(x => x.aplicada_durante_actividad).map(x => vcLab(c, "vacunas", x.vacuna)).join(", ");
+      return filaPf(r, [r.persona.nombre, r.persona.apellido].filter(Boolean).join(" ") || "(sin nombre)",
+        (ap ? "Aplicadas: " + ap : r.motivo_no_vacunacion ? "No vacunada: " + vcLab(c, "motivo_no_vacunacion", r.motivo_no_vacunacion) : "Sin dosis aplicada"));
+    }).join("") || `<p class="muted">Todavía no hay personas. Toque <b>+ Persona</b>.</p>`}</div>`;
+  Estado.aviso = null; abrirPf();
+}
+function pantallaVcEdicion() {
+  const c = cfgActiva(), r = Estado.editando, v = validarVc(c, r), p = r.persona, d = r.demo, pr = r.proc, a = r.antecedente;
+  const nuevo = !Estado.regs.some(x => x.uuid === r.uuid);
+  const abiertos = Estado.vcAbiertos || (Estado.vcAbiertos = new Set());
+  const geo = c.geografia || [], distritos = [...new Set(geo.map(g => g.d))].sort(), corrs = geo.filter(g => g.d === pr.distrito);
+  const mujerFertil = d.sexo === "F" && d.edad_unidad === "años" && vcAnios(d) >= 10 && vcAnios(d) <= 54;
+  const dosisHtml = (r.dosis || []).map((x, i) => {
+    const pre = "dosis." + i + ".", vac = vcCat(c, "vacunas").find(w => w.code === x.vacuna);
+    const vias = vcCat(c, "via_administracion").filter(w => !vac || !vac.vias || vac.vias.includes(w.code));
+    return `<details class="sind" data-mu="${x.dosis_uuid}" ${abiertos.has(x.dosis_uuid) ? "open" : ""}><summary><span><b>${esc(x.vacuna ? vcLab(c, "vacunas", x.vacuna) : "Dosis " + (i + 1))}</b>
+        <span class="small muted">${esc([vcLab(c, "dosis", x.dosis), x.aplicada_durante_actividad ? "aplicada hoy" : vcLab(c, "fuente_dato", x.fuente_dato), ddmm(x.fecha_aplicacion)].filter(Boolean).join(" · "))}</span></span></summary>
+      <div class="row"><div>${vcSelect(c, pre + "vacuna", "Vacuna", "vacunas", x.vacuna)}</div><div>${vcSelect(c, pre + "dosis", "Dosis", "dosis", x.dosis)}</div></div>
+      <div class="row"><div>${vcSelect(c, pre + "fuente_dato", "Fuente del dato", "fuente_dato", x.fuente_dato)}</div><div>${pfFecha(pre + "fecha_aplicacion", "Fecha de aplicación", x.fecha_aplicacion)}</div></div>
+      ${x.aplicada_durante_actividad ? `<div class="row"><div>${pfTexto(pre + "lote", "Lote", x.lote)}</div><div>${vcSelect(c, pre + "fabricante", "Fabricante", "fabricante", x.fabricante)}</div></div>
+      <div class="row"><div>${vcSelect(c, pre + "sitio_aplicacion", "Sitio de aplicación", "sitio_aplicacion", x.sitio_aplicacion)}</div><div>${vcSelect(c, pre + "via_administracion", "Vía", null, x.via_administracion, vias)}</div></div>
+      ${pfTexto(pre + "vacunador", "Vacunador", x.vacunador)}` : ""}
+      ${pfTexto(pre + "observacion", "Observación", x.observacion)}
+      <div class="btns"><button class="btn bad" type="button" data-quitar="${i}">Quitar esta dosis</button></div></details>`;
+  }).join("");
+  $("#app").innerHTML = `<div class="card"><div class="btns" style="margin-top:0"><button class="btn" id="btn_volver" type="button">← Personas</button></div>
+    <h1>${nuevo ? "Nueva persona" : esc([p.nombre, p.apellido].filter(Boolean).join(" ") || "Persona")}</h1><p class="small muted">${esc(c.nombre)}</p></div>
+    <div class="card"><h2>Identificación</h2>
+      <div class="row"><div>${vcSelect(c, "persona.tipo_identificacion", "Tipo de identificación", "tipo_identificacion", p.tipo_identificacion)}</div>
+      <div>${p.tipo_identificacion && p.tipo_identificacion !== "no_tiene" ? pfTexto("persona.numero_identificacion", "Número", p.numero_identificacion) : ""}</div></div>
+      <div class="row"><div>${pfTexto("persona.nombre", "Nombre", p.nombre)}</div><div>${pfTexto("persona.apellido", "Apellido", p.apellido)}</div></div>
+      <div class="row"><div>${pfTexto("persona.nombre_madre", "Nombre de la madre", p.nombre_madre)}</div><div>${pfTexto("persona.telefono", "Teléfono", p.telefono)}</div></div></div>
+    <div class="card"><h2>Datos</h2>
+      <div class="row"><div>${pfFecha("demo.fecha_nacimiento", "Fecha de nacimiento", d.fecha_nacimiento)}</div>
+      <div><label class="f">Edad</label><p style="margin:10px 0">${d.edad_valor !== "" && d.edad_valor != null ? esc(d.edad_valor + " " + d.edad_unidad) : "<span class='muted'>Sale de la fecha de nacimiento</span>"}</p></div></div>
+      <label class="f">Sexo</label>${seg("vc:demo.sexo", vcCat(c, "sexo").map(x => [x.code, x.label]), d.sexo)}
+      ${vcSelect(c, "demo.tipo_paciente", "Tipo de paciente", "tipo_paciente", d.tipo_paciente)}
+      ${mujerFertil ? `<label class="f">¿Embarazada?</label>${seg("vc:demo.embarazada", [["si", "Sí"], ["no", "No"]], d.embarazada)}
+        ${d.embarazada === "si" ? `<label class="f" for="vc_sem">Semanas de gestación</label><input type="number" id="vc_sem" data-k="demo.semanas_gestacion" inputmode="numeric" min="1" max="42" value="${esc(d.semanas_gestacion)}">` : ""}` : ""}
+      <label class="f">Condiciones (puede marcar varias)</label><div class="seg">${vcCat(c, "condiciones").map(x =>
+        `<button type="button" data-chk="condiciones" data-v="${esc(x.code)}" aria-pressed="${(r.condiciones || []).includes(x.code)}">${esc(x.label)}</button>`).join("")}</div></div>
+    <div class="card"><h2>Procedencia</h2>
+      <div class="row"><div><label class="f" for="vc_dis">Distrito</label><select id="vc_dis" data-k="proc.distrito"><option value="">Elija</option>${distritos.map(x => `<option ${x === pr.distrito ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></div>
+      <div><label class="f" for="vc_cor">Corregimiento</label><select id="vc_cor" data-k="proc.cod_geo"><option value="">Elija</option>${corrs.map(g => `<option value="${esc(g.cod)}" ${g.c === pr.corregimiento ? "selected" : ""}>${esc(g.c)}</option>`).join("")}</select></div></div>
+      <div class="row"><div>${pfTexto("proc.comunidad", "Comunidad o barriada", pr.comunidad)}</div><div>${pfTexto("proc.direccion", "Dirección o referencia", pr.direccion)}</div></div></div>
+    <div class="card"><h2>Antecedente vacunal</h2>
+      <label class="f">¿Antecedente verificado?</label>${seg("vb:antecedente.verificado", [["true", "Sí"], ["false", "No"]], String(!!a.verificado))}
+      <div class="row"><div>${vcSelect(c, "antecedente.fuente", "Fuente del antecedente", "fuente_antecedente", a.fuente)}</div>
+      <div><label class="f">¿Presentó carné?</label>${seg("vb:antecedente.carnet", [["true", "Sí"], ["false", "No"]], String(!!a.carnet))}</div></div>
+      ${vcSelect(c, "antecedente.esquema_completo", "Esquema completo para la edad", "esquema_completo_para_edad", a.esquema_completo)}
+      ${pfTexto("antecedente.observacion", "Observación", a.observacion)}</div>
+    <div class="card"><h2>Dosis (${(r.dosis || []).length})</h2>${dosisHtml}
+      <div class="btns"><button class="btn" id="btn_add_d" type="button">+ Agregar dosis</button></div>
+      ${!(r.dosis || []).some(x => x.aplicada_durante_actividad) ? vcSelect(c, "motivo_no_vacunacion", "Motivo de no vacunación", "motivo_no_vacunacion", r.motivo_no_vacunacion) : ""}
+      <label class="f" for="vc_obs">Observaciones</label><textarea id="vc_obs" data-k="observaciones">${esc(r.observaciones)}</textarea></div>
+    <div class="card"><div id="vc_val">${avisos(v)}</div>
+      <div class="btns"><button class="btn pri" id="btn_completa" type="button" ${v.e.length ? "disabled" : ""}>Guardar como completa</button>
+      <button class="btn" id="btn_borrador" type="button">Guardar borrador</button>
+      ${nuevo ? "" : `<button class="btn bad" id="btn_eliminar" type="button">Eliminar</button>`}</div>
+      <p class="small muted">Se guarda solo en este equipo, cifrado. Para que llegue a la app hay que enviarlo desde la pestaña Enviar.</p></div>`;
+  enlazarVc();
+}
+function enlazarVc() {
+  const r = Estado.editando, c = cfgActiva();
+  const redibujar = () => { const y = window.scrollY; pantallaVcEdicion(); window.scrollTo(0, y); };
+  const refrescar = () => { const v = validarVc(c, r); $("#vc_val").innerHTML = avisos(v); $("#btn_completa").disabled = v.e.length > 0; };
+  $("#btn_volver").onclick = () => { Estado.editando = null; pintar(); };
+  $("#app").querySelectorAll("[data-k]").forEach(el => el.onchange = () => {
+    const k = el.dataset.k, val = String(el.value).trim();
+    setRuta(r, k, val);
+    if (k === "demo.fecha_nacimiento") { const e = vcEdad(val, r.fecha); r.demo.edad_valor = e ? e.valor : ""; r.demo.edad_unidad = e ? e.unidad : "años"; return redibujar(); }
+    if (k === "proc.distrito") { r.proc.cod_geo = ""; r.proc.corregimiento = ""; return redibujar(); }
+    if (k === "proc.cod_geo") { const g = (c.geografia || []).find(z => z.cod === val); r.proc.corregimiento = g ? g.c : ""; }
+    if (/^dosis\.\d+\.fuente_dato$/.test(k)) { setRuta(r, k.replace(/fuente_dato$/, "aplicada_durante_actividad"), val === "aplicada_actividad"); return redibujar(); }
+    if (/^dosis\.\d+\.(vacuna|dosis)$/.test(k) || k === "persona.tipo_identificacion") return redibujar();
+    refrescar();
+  });
+  $("#app").querySelectorAll("[data-seg]").forEach(g => g.querySelectorAll("button").forEach(b => b.onclick = () => {
+    const tipo = g.dataset.seg.slice(0, 2), ruta = g.dataset.seg.slice(3);
+    const cur = b.getAttribute("aria-pressed") === "true";
+    if (tipo === "vb") setRuta(r, ruta, b.dataset.v === "true");
+    else setRuta(r, ruta, cur ? null : b.dataset.v);   // tocar de nuevo la deja en blanco
+    if (ruta === "demo.sexo" || ruta === "demo.embarazada") return redibujar();
+    g.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(tipo === "vb" ? x.dataset.v === b.dataset.v : (!cur && x === b))));
+    refrescar();
+  }));
+  $("#app").querySelectorAll("[data-chk]").forEach(b => b.onclick = () => {
+    const lista = getRuta(r, b.dataset.chk) || [], v = b.dataset.v, i = lista.indexOf(v);
+    if (i >= 0) lista.splice(i, 1); else lista.push(v);
+    setRuta(r, b.dataset.chk, lista); b.setAttribute("aria-pressed", String(i < 0)); refrescar();
+  });
+  $("#app").querySelectorAll("details[data-mu]").forEach(d => d.ontoggle = () => { if (d.open) Estado.vcAbiertos.add(d.dataset.mu); else Estado.vcAbiertos.delete(d.dataset.mu); });
+  $("#app").querySelectorAll("[data-quitar]").forEach(b => b.onclick = () => confirmar("Se quita esta dosis.", "Quitar", async () => { r.dosis.splice(+b.dataset.quitar, 1); redibujar(); }));
+  $("#btn_add_d").onclick = () => { const x = nuevaDosisVc(c); r.dosis.push(x); Estado.vcAbiertos.add(x.dosis_uuid); redibujar(); };
+  const guardar = async estado => {
+    r.estado = estado; r.exportado_en = null; await guardarReg(r); Estado.regs = await leerRegs();
+    Estado.editando = null; Estado.aviso = estado === "COMPLETA" ? "Persona guardada." : "Borrador guardado.";
+    pintar(); window.scrollTo(0, 0);
+  };
+  $("#btn_completa").onclick = () => guardar("COMPLETA");
+  $("#btn_borrador").onclick = () => guardar("BORRADOR");
+  const el = $("#btn_eliminar");
+  if (el) el.onclick = () => confirmar("Se elimina a esta persona, con sus dosis, de este equipo.", "Eliminar",
+    async () => { await DB.del("reg", r.uuid); Estado.regs = await leerRegs(); Estado.editando = null; pintar(); });
+}
+/* ── Enviar a Vacunación EIP ─────────────────────────────────────────────── */
+async function sobreVc(c, regs) {
+  const paquete = { schema_id: c.paquete.schema_id, schema_version: APP_VERSION, ref: c.ref, exported_at: new Date().toISOString(),
+    device_id: Estado.device, total: regs.length, registros: regs.map(r => { const x = structuredClone(r); delete x.exportado_en; return x; }) };
+  paquete.sha256 = await sha256hex(canon(paquete));
+  return sellarSobre(c, paquete, regs.length, paquete.exported_at, { ref: c.ref });
+}
+function pantallaEnviarVc() {
+  const c = cfgActiva(), regs = Estado.regs.filter(r => regCfg(r) === cfgId(c));
+  const comp = regs.filter(r => r.estado === "COMPLETA"), pend = comp.filter(r => !r.exportado_en), borr = regs.filter(r => r.estado === "BORRADOR");
+  $("#app").innerHTML = `<div class="card"><h2>Enviar a PAICSSCH</h2>
+    <p>${plural(pend.length, "persona completa sin enviar", "personas completas sin enviar")} · ${comp.length - pend.length} ya enviadas · ${plural(borr.length, "borrador", "borradores")} (no se envían).</p>
+    <p class="small muted">El archivo sale cifrado: solo la app lo puede abrir. Mándelo por WhatsApp o correo a quien lo carga en PAICSSCH, Vacunación sin conexión. Cargarlo dos veces no duplica nada.</p>
+    <div id="msg"></div>
+    <div class="btns"><button class="btn pri" id="btn_env" type="button" ${pend.length ? "" : "disabled"}>Enviar las ${pend.length} sin enviar</button>
+    <button class="btn" id="btn_env_todo" type="button" ${comp.length ? "" : "disabled"}>Volver a enviar todo (${comp.length})</button></div></div>`;
+  const env = async lista => {
+    try {
+      const sobre = await sobreVc(c, lista);
+      const nombre = `vacunacion_${c.ref}_${hoyISO()}_${lista.length}personas.json`.replace(/[^A-Za-z0-9_.-]/g, "_");
+      const res = await entregarArchivo(nombre, JSON.stringify(sobre));
+      if (res === "cancelado") return;
+      const ahora = new Date().toISOString();
+      for (const r of lista) { r.exportado_en = ahora; await guardarReg(r); }
+      Estado.regs = await leerRegs();
+      Estado.aviso = res === "compartido" ? `Se compartió el archivo con ${plural(lista.length, "persona", "personas")}.` : `Se descargó ${nombre}. Mándelo a Epidemiología.`;
+      Estado.tab = "personas"; pintar();
     } catch (err) { $("#msg").innerHTML = `<div class="aviso bad">No se pudo preparar el archivo: ${esc(err.message || err)}</div>`; }
   };
   $("#btn_env").onclick = () => env(pend);
