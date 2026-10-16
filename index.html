@@ -17,9 +17,10 @@
   con el archivo de configuración que descarga el módulo. Lo capturado se guarda
   CIFRADO en el equipo con la clave de acceso, y sale CIFRADO con la clave pública
   del brote o del evento: solo el módulo de la app puede abrirlo.
-  Dos cuestionarios sobre el mismo motor (decisión T1, 15-oct-2026): la entrevista
-  de brote (tipo BROTE) y el día del punto con sus señales de la vigilancia
-  intensificada ante desastres (tipo VID).
+  Tres cuestionarios sobre el mismo motor (decisión T1, 15-oct-2026): la entrevista
+  de brote (tipo BROTE), el día del punto con sus señales de la vigilancia
+  intensificada ante desastres (tipo VID) y la investigación perifocal de
+  Vacunación EIP (tipo PERIFOCO: caso índice y viviendas con sus miembros).
   Fuente: EPICSSCH_APP/tablero_campo/ (se publica copiando esta carpeta).
 -->
 <style>
@@ -117,7 +118,7 @@ details.sind[open] summary::after{content:"\2212"}
 /* ============================================================================
    MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
    ========================================================================== */
-const APP_VERSION = "1.2.0";
+const APP_VERSION = "1.3.0";
 const CFG_SCHEMA = "epicssch.campo.config";
 const PKG_SCHEMA = "epicssch.campo.paquete";
 const CIF_SCHEMA = "epicssch.campo.cifrado";
@@ -137,10 +138,11 @@ function canon(v) {           // JSON con claves ordenadas: misma huella en cual
   return JSON.stringify(v ?? null);
 }
 // Cada configuración tiene su identificador: el CODBROTE en Brotes, la referencia
-// VID-<evento>-<unidad> en Desastres. Los registros viejos de Brotes no traen cfg.
+// VID-<evento>-<unidad> en Desastres, PF-<evento>-<fecha>-<sufijo> en Perifoco.
+// Los registros viejos de Brotes no traen cfg.
 const cfgId = c => c ? (c.ref || c.codbrote) : null;
 const regCfg = r => r.cfg || r.codbrote;
-const etiquetaCfg = c => c.tipo === "VID" ? "Desastre · " + c.unidad : c.codbrote;
+const etiquetaCfg = c => c.tipo === "VID" ? "Desastre · " + c.unidad : c.tipo === "PERIFOCO" ? "Perifoco · " + c.localidad.comunidad : c.codbrote;
 async function sha256hex(txt) { const h = await crypto.subtle.digest("SHA-256", te.encode(txt)); return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join(""); }
 
 // ── IndexedDB (con respaldo en memoria si el navegador la niega) ──────────────
@@ -284,7 +286,8 @@ function avisoInstalar() {
 
 const TABS = {
   BROTE: [["lista", "Entrevistas"], ["analisis", "Análisis preliminar"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]],
-  VID: [["dias", "Días"], ["senales", "Señales"], ["puntos", "Puntos"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]]
+  VID: [["dias", "Días"], ["senales", "Señales"], ["puntos", "Puntos"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]],
+  PERIFOCO: [["caso", "Caso índice"], ["viviendas", "Viviendas"], ["enviar", "Enviar"], ["brotes", "Brotes y eventos"]]
 };
 function pintarTabs(c) {
   const t = c ? (TABS[c.tipo] || TABS.BROTE) : [["brotes", "Brotes y eventos"]];
@@ -296,6 +299,7 @@ function ponerFab(c) {
   let txt = null;
   if (c && !Estado.editando) {
     if (c.tipo === "VID") txt = { dias: "+ Capturar un día", senales: "+ Nueva señal", puntos: "+ Punto nuevo" }[Estado.tab] || null;
+    else if (c.tipo === "PERIFOCO") txt = Estado.tab === "viviendas" ? "+ Nueva vivienda" : (Estado.tab === "caso" && !regsDe(c, "CASO").length) ? "+ Caso índice" : null;
     else if (Estado.tab === "lista") txt = "+ Nueva entrevista";
   }
   $("#fab").classList.toggle("oculto", !txt);
@@ -310,9 +314,11 @@ async function pintar() {
   $("#hdr_brote").textContent = c ? etiquetaCfg(c) : "";
   if (!bloq || !desbloqueado) { $("#fab").classList.add("oculto"); return bloq ? pantallaAbrir() : pantallaCrearClave(); }
   pintarTabs(c); ponerFab(c);
-  if (Estado.editando) return c.tipo === "VID" ? pantallaVidEdicion() : pantallaEntrevista();
+  if (Estado.editando) return c.tipo === "VID" ? pantallaVidEdicion() : c.tipo === "PERIFOCO" ? pantallaPfEdicion() : pantallaEntrevista();
   const P = c && c.tipo === "VID"
     ? { dias: pantallaDias, senales: pantallaSenales, puntos: pantallaPuntos, enviar: pantallaEnviarVid, brotes: pantallaBrotes }
+    : c && c.tipo === "PERIFOCO"
+    ? { caso: pantallaPfCaso, viviendas: pantallaPfViviendas, enviar: pantallaEnviarPf, brotes: pantallaBrotes }
     : { lista: pantallaLista, analisis: pantallaAnalisis, enviar: pantallaEnviar, brotes: pantallaBrotes };
   P[Estado.tab]();
 }
@@ -359,12 +365,13 @@ function confirmar(texto, boton, fn) {      // confirmación dentro de la págin
 
 /* ── Brotes y eventos cargados en el equipo ───────────────────────────────── */
 function pantallaBrotes() {
-  const filas = Estado.cfgs.map(c => `<div class="it"><div class="tx"><b>${esc(c.tipo === "VID" ? c.nombre : c.codbrote)}</b><span class="small muted">${c.tipo === "VID"
+  const filas = Estado.cfgs.map(c => `<div class="it"><div class="tx"><b>${esc(c.tipo === "VID" || c.tipo === "PERIFOCO" ? c.nombre : c.codbrote)}</b><span class="small muted">${c.tipo === "VID"
       ? `Vigilancia ante desastres · Unidad ${esc(c.unidad)} · ${(c.puntos || []).length} puntos`
+      : c.tipo === "PERIFOCO" ? `Perifoco · ${esc(c.evento.label)} · ${esc(c.localidad.corregimiento)} · ${esc(c.ref)}`
       : `${esc(c.nombre || c.evento)} · ${esc(c.evento)}`}</span></div>
      ${cfgId(c) === Estado.activo ? `<span class="pill">Activo</span>` : `<button class="btn" data-act="${esc(cfgId(c))}" type="button">Usar</button>`}</div>`).join("");
   $("#app").innerHTML = `${avisoInstalar()}<div class="card"><h2>Brotes y eventos en este equipo</h2>
-    <p class="muted small">Cargue el archivo de configuración que le manda Epidemiología por WhatsApp o correo: el de un brote sale de Gestión de Brotes (pestaña Tablero de campo); el de un desastre, de Vigilancia ante desastres (pestaña Sin conexión).</p>
+    <p class="muted small">Cargue el archivo de configuración que le manda Epidemiología por WhatsApp o correo: el de un brote sale de Gestión de Brotes (pestaña Tablero de campo); el de un desastre, de Vigilancia ante desastres (pestaña Sin conexión); el de un perifoco, de PAICSSCH, Vacunación EIP (pestaña Perifoco sin conexión).</p>
     <div class="lista">${filas || `<p class="muted">Todavía no hay ningún brote ni evento cargado.</p>`}</div>
     <div id="msg"></div><div class="btns"><button class="btn pri" id="btn_cargar" type="button">Cargar archivo del brote o del evento</button></div></div>
     ${Estado.cfgs.some(c => c.tipo !== "VID") ? `<div class="card"><h2>Entrevistador</h2><label class="f" for="entrev">Nombre de quien entrevista en este equipo</label><input type="text" id="entrev" value="${esc(Estado.entrevistador)}"></div>` : ""}
@@ -383,13 +390,16 @@ $("#file_cfg").onchange = async e => {
     if (c.tipo === "VID") {
       if (!c.ref || !c.evento || !c.evento.id || !c.unidad || !Array.isArray(c.puntos) || !c.catalogos || !c.paquete)
         throw new Error("Al archivo del evento le faltan datos: descárguelo de nuevo en la app.");
+    } else if (c.tipo === "PERIFOCO") {
+      if (!c.ref || !c.evento || !c.evento.code || !c.localidad || !Array.isArray(c.sintomas) || !c.paquete)
+        throw new Error("Al archivo del perifoco le faltan datos: descárguelo de nuevo en la app.");
     } else if (!c.codbrote) throw new Error("Al archivo le falta el código del brote.");
     await crypto.subtle.importKey("spki", unb64(c.clave.spki), { name: "RSA-OAEP", hash: "SHA-1" }, false, ["encrypt"]);
     const previo = Estado.cfgs.find(x => cfgId(x) === cfgId(c));
     Estado.cfgs = Estado.cfgs.filter(x => cfgId(x) !== cfgId(c)).concat([c]);
     Estado.activo = cfgId(c);
     await DB.put("cfg", Estado.cfgs, "brotes"); await DB.put("cfg", Estado.activo, "activo");
-    Estado.tab = ""; Estado.aviso = (c.tipo === "VID" ? `Evento ${c.nombre}, unidad ${c.unidad}, cargado` : `Brote ${c.codbrote} cargado`) + (previo ? " (actualizado)." : "."); pintar();
+    Estado.tab = ""; Estado.aviso = (c.tipo === "VID" ? `Evento ${c.nombre}, unidad ${c.unidad}, cargado` : c.tipo === "PERIFOCO" ? `${c.nombre} cargado` : `Brote ${c.codbrote} cargado`) + (previo ? " (actualizado)." : "."); pintar();
   } catch (err) { const m = $("#msg"); if (m) m.innerHTML = `<div class="aviso bad">${esc(err.message || "No se pudo leer el archivo.")}</div>`; }
 };
 
@@ -414,6 +424,7 @@ function pantallaLista() {
 $("#btn_nueva").onclick = () => {
   const c = cfgActiva();
   if (c.tipo === "VID") return nuevoVid(c);
+  if (c.tipo === "PERIFOCO") return nuevoPf(c, Estado.tab === "viviendas" ? "VIVIENDA" : "CASO");
   Estado.editando = { uuid: uuid(), codbrote: c.codbrote, estado: "BORRADOR", rol: null, enfermo: null, entrevistador: Estado.entrevistador,
     fecha_entrevista: hoyISO(), hora_entrevista: ahoraHM(), creado: new Date().toISOString(),
     persona: {}, lugar: {}, tiempo: {}, clinica: { sintomas: {} }, exposiciones: {}, laboratorio: {}, observaciones: "" };
@@ -1131,6 +1142,237 @@ function pantallaEnviarVid() {
   };
   $("#btn_env").onclick = () => env(pd, ps);
   $("#btn_env_todo").onclick = () => env(dias, sen);
+}
+
+/* ============================================================================
+   PERIFOCO (tipo PERIFOCO) — Vacunación EIP, 15-oct-2026
+   Las reglas son las de funciones_perifoco_campo.R (pf_errores):
+   - caso índice: nombre, sexo, edad y clasificación;
+   - vivienda: su condición y, si está abierta, cuántas personas viven en ella;
+   - cada persona tamizada: nombre, sexo y edad.
+   Los síntomas son los del evento, los mismos del formulario PAI; se responde Sí,
+   No o No interrogado. Las viviendas cerradas también se anotan: cuentan en el
+   informe de perifoco. La app convierte lo enviado en una jornada EIP.
+   ========================================================================== */
+const SNI = [["si", "Sí"], ["no", "No"], ["no_interrogado", "No interr."]];
+const VAC = [["si", "Sí"], ["no", "No"], ["desconocido", "No sabe"]];
+const CEDULA_RE = /^(\d{1,2}|PE|E|N|\d{1,2}(AV|PI))-\d{1,4}-\d{1,6}$/i;
+const edadNum = v => v !== "" && v != null && isFinite(Number(v)) && Number(v) >= 0;
+const idDe = k => "pf_" + k.replace(/[^A-Za-z0-9]/g, "_");
+function getRuta(o, ruta) { return ruta.split(".").reduce((x, k) => x == null ? undefined : x[k], o); }
+function pfTexto(k, rot, v) { return `<label class="f" for="${idDe(k)}">${esc(rot)}</label><input type="text" id="${idDe(k)}" data-k="${k}" value="${esc(v)}" autocomplete="off">`; }
+function pfFecha(k, rot, v) { return `<label class="f" for="${idDe(k)}">${esc(rot)}</label><input type="date" id="${idDe(k)}" data-k="${k}" value="${esc(v)}">`; }
+
+function nuevoMiembroPf() {
+  return { uuid: uuid(), nombre: "", apellido: "", cedula: "", sexo: null, edad_valor: "", edad_unidad: "años", sintomas: {},
+    fis: "", fexantema: "", vacunado: null, muestra: null, tipo_muestra: [], clasificacion_post: "", observacion: "" };
+}
+function nuevoPf(c, tipo) {
+  const base = { uuid: uuid(), cfg: cfgId(c), tipo_reg: tipo, estado: "BORRADOR", entrevistador: Estado.entrevistador, creado: new Date().toISOString() };
+  Estado.editando = tipo === "CASO"
+    ? { ...base, fecha: hoyISO(), persona: { edad_unidad: "años" }, clasificacion: null, fexp: "", lugar_exposicion: "", fis: "", fexantema: "",
+        sintomas: {}, vacunado: null, muestra: null, tipo_muestra: [], observaciones: "" }
+    : { ...base, fecha_visita: hoyISO(), numero: "", condicion: null, habitantes: "", calle_sector: "", punto_referencia: "", telefono: "",
+        observaciones: "", miembros: [] };
+  pintar(); window.scrollTo(0, 0);
+}
+
+function erroresPersona(p, quien) {
+  const e = [];
+  if (!String(p.nombre || "").trim()) e.push(`Falta el nombre de ${quien}.`);
+  if (!["M", "F"].includes(p.sexo)) e.push(`Falta el sexo de ${quien}.`);
+  if (!edadNum(p.edad_valor)) e.push(`Falta la edad de ${quien}.`);
+  return e;
+}
+function validarPf(c, r) {
+  const e = [], a = [];
+  const ced = (p, quien) => { if (p.cedula && !CEDULA_RE.test(p.cedula)) a.push(`La cédula de ${quien} no tiene el formato habitual (por ejemplo 4-123-456).`); };
+  const tam = (x, quien) => {
+    const si = Object.values(x.sintomas || {}).filter(v => v === "si").length;
+    if (x.fis && x.fis > hoyISO()) e.push(`La fecha de inicio de síntomas de ${quien} es futura.`);
+    if (si && !x.fis) a.push(`${quien} tiene síntomas y no tiene fecha de inicio.`);
+    if (x.muestra === "S" && !(x.tipo_muestra || []).length) a.push(`Indique el tipo de muestra de ${quien}.`);
+    return si;
+  };
+  if (r.tipo_reg === "CASO") {
+    e.push(...erroresPersona(r.persona, "el caso índice"));
+    if (!(c.clasif_caso || []).some(x => x.code === r.clasificacion)) e.push("Indique si el caso es sospechoso, probable o confirmado.");
+    ced(r.persona, "el caso índice"); tam(r, "el caso índice");
+    if (r.fexp && r.fis && r.fexp > r.fis) a.push("La exposición quedó después del inicio de síntomas.");
+  } else {
+    if (!(c.condiciones || []).some(x => x.code === r.condicion)) e.push("Indique la condición de la vivienda.");
+    if (r.condicion === "abierta") {
+      if (!edadNum(r.habitantes) || !Number.isInteger(Number(r.habitantes))) e.push("Indique cuántas personas viven en la vivienda.");
+      if (!r.miembros.length) a.push("Vivienda abierta sin ninguna persona tamizada.");
+      else if (edadNum(r.habitantes) && r.miembros.length > Number(r.habitantes)) a.push("Hay más personas tamizadas que habitantes anotados.");
+    } else if (r.miembros.length) a.push("La vivienda no está abierta y tiene personas tamizadas: revise la condición.");
+    r.miembros.forEach((m, i) => {
+      const q = String(m.nombre || "").trim() || `la persona ${i + 1}`;
+      e.push(...erroresPersona(m, `la persona ${i + 1}`)); ced(m, q);
+      const si = tam(m, q);
+      if (si >= 2 && m.clasificacion_post === "Asintomático") a.push(`${q} tiene ${si} síntomas y quedó como asintomática.`);
+    });
+  }
+  return { e, a };
+}
+
+function camposPersona(pre, p) {
+  return `<div class="row"><div>${pfTexto(pre + "nombre", "Nombre", p.nombre)}</div><div>${pfTexto(pre + "apellido", "Apellido", p.apellido)}</div></div>
+    <div class="row"><div><label class="f" for="${idDe(pre + "cedula")}">Cédula</label><input type="text" id="${idDe(pre + "cedula")}" data-k="${pre}cedula" value="${esc(p.cedula)}" autocomplete="off" placeholder="4-123-456"></div>
+    <div><label class="f">Sexo</label>${seg("pf:" + pre + "sexo", [["M", "Hombre"], ["F", "Mujer"]], p.sexo)}</div></div>
+    <div class="row"><div><label class="f" for="${idDe(pre + "edad_valor")}">Edad</label><input type="number" id="${idDe(pre + "edad_valor")}" data-k="${pre}edad_valor" inputmode="numeric" min="0" max="120" value="${esc(p.edad_valor)}"></div>
+    <div><label class="f">En</label>${seg("pf:" + pre + "edad_unidad", [["años", "Años"], ["meses", "Meses"]], p.edad_unidad || "años")}</div></div>`;
+}
+function camposTamizaje(c, pre, x) {
+  const sint = c.sintomas || [];
+  return `${sint.length ? `<label class="f">Signos y síntomas</label>${sint.map(s => `<div class="tri"><span>${esc(s.label)}</span>${seg("pf:" + pre + "sintomas." + s.code, SNI, (x.sintomas || {})[s.code])}</div>`).join("")}`
+      : `<p class="small muted">Este evento no trae lista de síntomas: anótelos en observaciones.</p>`}
+    <div class="row"><div>${pfFecha(pre + "fis", "Inicio de síntomas", x.fis)}</div>${c.exantema ? `<div>${pfFecha(pre + "fexantema", "Inicio del exantema", x.fexantema)}</div>` : ""}</div>
+    <label class="f">¿Vacunado contra ${esc(c.evento.label)}?</label>${seg("pf:" + pre + "vacunado", VAC, x.vacunado)}
+    <label class="f">¿Se tomó muestra?</label>${seg("pf:" + pre + "muestra", [["S", "Sí"], ["N", "No"]], x.muestra)}
+    ${x.muestra === "S" ? `<label class="f">Tipo de muestra (puede marcar varias)</label><div class="seg">${(c.muestras || []).map(m =>
+      `<button type="button" data-chk="${pre}tipo_muestra" data-v="${esc(m)}" aria-pressed="${(x.tipo_muestra || []).includes(m)}">${esc(m)}</button>`).join("")}</div>` : ""}`;
+}
+
+function cabeceraPf(c) {
+  return `<div class="card"><h1>${esc(c.nombre)}</h1><p class="muted">${esc(c.evento.label)} · ${esc(c.localidad.comunidad)}, ${esc(c.localidad.corregimiento)} (${esc(c.localidad.distrito)})</p>
+    <p class="small muted">${esc(c.instalacion.nombre)} · desde ${esc(ddmm(c.fecha_inicio))} · ${esc(c.ref)}</p></div>`;
+}
+function filaPf(r, titulo, sub) {
+  return `<div class="it" data-ed="${r.uuid}" role="button" tabindex="0"><div class="tx"><b>${esc(titulo)}</b><span class="small muted">${esc(sub)}</span></div>
+    ${r.estado === "BORRADOR" ? `<span class="pill BORRADOR">Borrador</span>` : ""}${r.exportado_en ? `<span class="pill">Enviado</span>` : ""}</div>`;
+}
+function abrirPf() {
+  $("#app").querySelectorAll("[data-ed]").forEach(el => {
+    const ab = () => { Estado.editando = structuredClone(Estado.regs.find(r => r.uuid === el.dataset.ed)); pintar(); window.scrollTo(0, 0); };
+    el.onclick = ab; el.onkeydown = e => { if (e.key === "Enter") ab(); };
+  });
+}
+function pantallaPfCaso() {
+  const c = cfgActiva(), casos = regsDe(c, "CASO");
+  const clas = k => ((c.clasif_caso || []).find(x => x.code === k) || { label: "Sin clasificar" }).label;
+  $("#app").innerHTML = `${Estado.aviso ? `<div class="aviso ok">${esc(Estado.aviso)}</div>` : ""}${avisoInstalar()}${cabeceraPf(c)}
+    <div class="card lista"><h2>Caso índice</h2>${casos.map(r => filaPf(r, [r.persona.nombre, r.persona.apellido].filter(Boolean).join(" ") || "(sin nombre)",
+        clas(r.clasificacion) + (r.fis ? " · inicio " + ddmm(r.fis) : ""))).join("")
+      || `<p class="muted">Todavía no se ha registrado el caso índice. Toque <b>Caso índice</b>. Si otra brigada ya lo registró, no hace falta repetirlo: la app junta los envíos.</p>`}</div>`;
+  Estado.aviso = null; abrirPf();
+}
+function pantallaPfViviendas() {
+  const c = cfgActiva(), vv = regsDe(c, "VIVIENDA");
+  const cnt = k => vv.filter(r => r.condicion === k).length;
+  const personas = vv.reduce((n, r) => n + (r.miembros || []).length, 0);
+  const cond = k => ((c.condiciones || []).find(x => x.code === k) || { label: "sin condición" }).label;
+  $("#app").innerHTML = `${Estado.aviso ? `<div class="aviso ok">${esc(Estado.aviso)}</div>` : ""}${cabeceraPf(c)}
+    <div class="card"><p>${plural(vv.length, "vivienda visitada", "viviendas visitadas")}: ${cnt("abierta")} abiertas, ${cnt("cerrada")} cerradas${cnt("abandonada") ? `, ${cnt("abandonada")} abandonadas` : ""}${cnt("rechazo") ? `, ${cnt("rechazo")} con rechazo` : ""}.</p>
+      <p class="small muted">${plural(personas, "persona tamizada", "personas tamizadas")}.</p></div>
+    <div class="card lista">${vv.map(r => filaPf(r, "Vivienda " + (r.numero || "s/n") + " · " + cond(r.condicion),
+        [r.calle_sector, plural((r.miembros || []).length, "persona", "personas"), ddmm(r.fecha_visita)].filter(Boolean).join(" · "))).join("")
+      || `<p class="muted">Todavía no hay viviendas. Toque <b>Nueva vivienda</b>. Anote también las cerradas: cuentan en el informe.</p>`}</div>`;
+  Estado.aviso = null; abrirPf();
+}
+
+function pantallaPfEdicion() {
+  const c = cfgActiva(), r = Estado.editando, v = validarPf(c, r), esCaso = r.tipo_reg === "CASO";
+  const nuevo = !Estado.regs.some(x => x.uuid === r.uuid);
+  const abiertos = Estado.pfAbiertos || (Estado.pfAbiertos = new Set());
+  const obs = `<label class="f" for="pf_obs">Observaciones</label><textarea id="pf_obs" data-k="observaciones">${esc(r.observaciones)}</textarea>`;
+  const cuerpo = esCaso ? `
+    <div class="card"><h2>Persona</h2>${camposPersona("persona.", r.persona)}
+      <label class="f">Clasificación</label>${seg("pf:clasificacion", (c.clasif_caso || []).map(x => [x.code, x.label]), r.clasificacion)}
+      <div class="row"><div>${pfFecha("fexp", "Fecha de exposición", r.fexp)}</div><div>${pfTexto("lugar_exposicion", "Lugar probable de exposición", r.lugar_exposicion)}</div></div></div>
+    <div class="card"><h2>Tamizaje</h2>${camposTamizaje(c, "", r)}${obs}</div>` : `
+    <div class="card"><h2>Vivienda</h2>
+      <div class="row"><div>${pfFecha("fecha_visita", "Fecha de la visita", r.fecha_visita)}</div><div>${pfTexto("numero", "Número de la vivienda", r.numero)}</div></div>
+      <label class="f">Condición</label>${seg("pf:condicion", (c.condiciones || []).map(x => [x.code, x.label]), r.condicion)}
+      ${r.condicion === "abierta" ? `<label class="f" for="pf_hab">Personas que viven en ella</label><input type="number" id="pf_hab" data-k="habitantes" inputmode="numeric" min="0" max="60" value="${esc(r.habitantes)}">` : ""}
+      ${pfTexto("calle_sector", "Calle o sector", r.calle_sector)}${pfTexto("punto_referencia", "Punto de referencia", r.punto_referencia)}${pfTexto("telefono", "Teléfono de contacto", r.telefono)}${obs}</div>
+    ${r.condicion === "abierta" || r.miembros.length ? `<div class="card"><h2>Personas tamizadas (${r.miembros.length})</h2>
+      ${r.miembros.map((m, i) => `<details class="sind" data-mu="${m.uuid}" ${abiertos.has(m.uuid) ? "open" : ""}><summary><span><b>${esc([m.nombre, m.apellido].filter(Boolean).join(" ") || "Persona " + (i + 1))}</b>
+          <span class="small muted">${esc(edadNum(m.edad_valor) ? m.edad_valor + " " + (m.edad_unidad || "años") : "")}</span></span></summary>
+        ${camposPersona("miembros." + i + ".", m)}${camposTamizaje(c, "miembros." + i + ".", m)}
+        <label class="f" for="${idDe("miembros." + i + ".clasificacion_post")}">Clasificación tras el tamizaje</label>
+        <select id="${idDe("miembros." + i + ".clasificacion_post")}" data-k="miembros.${i}.clasificacion_post"><option value="">Elija</option>${(c.clasif_post || []).map(x => `<option ${x === m.clasificacion_post ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>
+        ${pfTexto("miembros." + i + ".observacion", "Observación", m.observacion)}
+        <div class="btns"><button class="btn bad" type="button" data-quitar="${i}">Quitar a esta persona</button></div></details>`).join("")}
+      <div class="btns"><button class="btn" id="btn_add_m" type="button">+ Agregar persona</button></div></div>` : ""}`;
+  $("#app").innerHTML = `<div class="card"><div class="btns" style="margin-top:0"><button class="btn" id="btn_volver" type="button">← ${esCaso ? "Caso índice" : "Viviendas"}</button></div>
+    <h1>${esCaso ? "Caso índice" : nuevo ? "Nueva vivienda" : "Vivienda " + esc(r.numero || "s/n")}</h1><p class="small muted">${esc(c.nombre)}</p></div>
+    ${cuerpo}
+    <div class="card"><div id="pf_val">${avisos(v)}</div>
+      <div class="btns"><button class="btn pri" id="btn_completa" type="button" ${v.e.length ? "disabled" : ""}>Guardar como completa</button>
+      <button class="btn" id="btn_borrador" type="button">Guardar borrador</button>
+      ${nuevo ? "" : `<button class="btn bad" id="btn_eliminar" type="button">Eliminar</button>`}</div>
+      <p class="small muted">Se guarda solo en este equipo, cifrado. Para que llegue a la app hay que enviarlo desde la pestaña Enviar.</p></div>`;
+  enlazarPf();
+}
+function enlazarPf() {
+  const r = Estado.editando, c = cfgActiva();
+  const redibujarPf = () => { const y = window.scrollY; pantallaPfEdicion(); window.scrollTo(0, y); };
+  const refrescar = () => { const v = validarPf(c, r); $("#pf_val").innerHTML = avisos(v); $("#btn_completa").disabled = v.e.length > 0; };
+  $("#btn_volver").onclick = () => { Estado.editando = null; pintar(); };
+  $("#app").querySelectorAll("[data-k]").forEach(el => el.onchange = () => { setRuta(r, el.dataset.k, String(el.value).trim()); refrescar(); });
+  $("#app").querySelectorAll("[data-seg]").forEach(g => g.querySelectorAll("button").forEach(b => b.onclick = () => {
+    const ruta = g.dataset.seg.slice(3), val = b.getAttribute("aria-pressed") === "true" ? null : b.dataset.v;   // tocar de nuevo la deja en blanco
+    setRuta(r, ruta, val);
+    if (/(^|\.)(condicion|muestra)$/.test(ruta)) {
+      if (/muestra$/.test(ruta) && val !== "S") setRuta(r, ruta.replace(/muestra$/, "tipo_muestra"), []);
+      return redibujarPf();
+    }
+    g.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.v === val)));
+    refrescar();
+  }));
+  $("#app").querySelectorAll("[data-chk]").forEach(b => b.onclick = () => {
+    const lista = getRuta(r, b.dataset.chk) || [], v = b.dataset.v, i = lista.indexOf(v);
+    if (i >= 0) lista.splice(i, 1); else lista.push(v);
+    setRuta(r, b.dataset.chk, lista); b.setAttribute("aria-pressed", String(i < 0)); refrescar();
+  });
+  $("#app").querySelectorAll("details[data-mu]").forEach(d => d.ontoggle = () => { if (d.open) Estado.pfAbiertos.add(d.dataset.mu); else Estado.pfAbiertos.delete(d.dataset.mu); });
+  $("#app").querySelectorAll("[data-quitar]").forEach(b => b.onclick = () => confirmar("Se quita a esta persona de la vivienda.", "Quitar", async () => { r.miembros.splice(+b.dataset.quitar, 1); redibujarPf(); }));
+  const add = $("#btn_add_m");
+  if (add) add.onclick = () => { const m = nuevoMiembroPf(); r.miembros.push(m); Estado.pfAbiertos.add(m.uuid); redibujarPf(); };
+  const guardar = async estado => {
+    r.estado = estado; r.exportado_en = null; await guardarReg(r); Estado.regs = await leerRegs();
+    Estado.editando = null; Estado.aviso = estado === "COMPLETA" ? (r.tipo_reg === "CASO" ? "Caso índice guardado." : "Vivienda guardada.") : "Borrador guardado.";
+    pintar(); window.scrollTo(0, 0);
+  };
+  $("#btn_completa").onclick = () => guardar("COMPLETA");
+  $("#btn_borrador").onclick = () => guardar("BORRADOR");
+  const el = $("#btn_eliminar");
+  if (el) el.onclick = () => confirmar(r.tipo_reg === "CASO" ? "Se elimina el caso índice de este equipo." : "Se elimina esta vivienda, con sus personas, de este equipo.", "Eliminar",
+    async () => { await DB.del("reg", r.uuid); Estado.regs = await leerRegs(); Estado.editando = null; pintar(); });
+}
+
+/* ── Enviar a Vacunación EIP ─────────────────────────────────────────────── */
+async function sobrePf(c, regs) {
+  const paquete = { schema_id: c.paquete.schema_id, schema_version: APP_VERSION, ref: c.ref, exported_at: new Date().toISOString(),
+    device_id: Estado.device, total: regs.length, registros: regs.map(r => { const x = structuredClone(r); delete x.exportado_en; return x; }) };
+  paquete.sha256 = await sha256hex(canon(paquete));
+  return sellarSobre(c, paquete, regs.length, paquete.exported_at, { ref: c.ref });
+}
+function pantallaEnviarPf() {
+  const c = cfgActiva(), regs = Estado.regs.filter(r => regCfg(r) === cfgId(c));
+  const comp = regs.filter(r => r.estado === "COMPLETA"), pend = comp.filter(r => !r.exportado_en), borr = regs.filter(r => r.estado === "BORRADOR");
+  $("#app").innerHTML = `<div class="card"><h2>Enviar a Vacunación EIP</h2>
+    <p>${plural(pend.length, "registro completo sin enviar", "registros completos sin enviar")} · ${comp.length - pend.length} ya enviados · ${plural(borr.length, "borrador", "borradores")} (no se envían).</p>
+    <p class="small muted">Cada vivienda viaja con sus personas. El archivo sale cifrado: solo la app lo puede abrir. Mándelo por WhatsApp o correo a Epidemiología, que lo carga en PAICSSCH, Vacunación EIP, pestaña Perifoco sin conexión. Cargarlo dos veces no duplica nada.</p>
+    <div id="msg"></div>
+    <div class="btns"><button class="btn pri" id="btn_env" type="button" ${pend.length ? "" : "disabled"}>Enviar los ${pend.length} sin enviar</button>
+    <button class="btn" id="btn_env_todo" type="button" ${comp.length ? "" : "disabled"}>Volver a enviar todo (${comp.length})</button></div></div>`;
+  const env = async lista => {
+    try {
+      const sobre = await sobrePf(c, lista);
+      const nombre = `perifoco_${c.ref}_${hoyISO()}_${lista.length}registros.json`.replace(/[^A-Za-z0-9_.-]/g, "_");
+      const res = await entregarArchivo(nombre, JSON.stringify(sobre));
+      if (res === "cancelado") return;
+      const ahora = new Date().toISOString();
+      for (const r of lista) { r.exportado_en = ahora; await guardarReg(r); }
+      Estado.regs = await leerRegs();
+      Estado.aviso = res === "compartido" ? `Se compartió el archivo con ${plural(lista.length, "registro", "registros")}.` : `Se descargó ${nombre}. Mándelo a Epidemiología.`;
+      Estado.tab = "viviendas"; pintar();
+    } catch (err) { $("#msg").innerHTML = `<div class="aviso bad">No se pudo preparar el archivo: ${esc(err.message || err)}</div>`; }
+  };
+  $("#btn_env").onclick = () => env(pend);
+  $("#btn_env_todo").onclick = () => env(comp);
 }
 
 iniciar();
