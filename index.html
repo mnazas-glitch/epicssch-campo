@@ -117,7 +117,7 @@ details.sind[open] summary::after{content:"\2212"}
 /* ============================================================================
    MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
    ========================================================================== */
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.2.0";
 const CFG_SCHEMA = "epicssch.campo.config";
 const PKG_SCHEMA = "epicssch.campo.paquete";
 const CIF_SCHEMA = "epicssch.campo.cifrado";
@@ -713,6 +713,51 @@ function resumenDia(r) {
   return [t.casos && plural(t.casos, "caso", "casos"), t.les && plural(t.les, "lesionado", "lesionados"), t.def && plural(t.def, "defunción", "defunciones")].filter(Boolean).join(", ");
 }
 
+/* ── Ubicación (opcional, nunca obligatoria) ──────────────────────────────────
+   Va en texto porque el JSON canónico solo admite enteros. La de un punto se
+   guarda con 6 decimales; la de una señal con 3 (unos 100 m): es el lugar de la
+   señal, no una vivienda, y el redondeo se hace aquí, antes de que salga del
+   equipo. El servidor vuelve a redondear. */
+const DEC_PUNTO = 6, DEC_SENAL = 3;
+const tieneUbic = r => r.latitud != null && r.latitud !== "" && r.longitud != null && r.longitud !== "";
+function textoUbic(r) {
+  return tieneUbic(r) ? `${r.latitud}, ${r.longitud}${r.precision_m != null && r.precision_m !== "" ? ` (± ${r.precision_m} m)` : ""}` : "";
+}
+function bloqueUbic(r, dec, dis) {
+  const nota = dec === DEC_SENAL ? "Se guarda redondeada a unos 100 m: marca el lugar de la señal, no una casa." : "La del lugar donde está el punto.";
+  return `<label class="f">Ubicación (opcional)</label>
+    <p class="small ${tieneUbic(r) ? "" : "muted"}" id="ubic_txt">${tieneUbic(r) ? esc(textoUbic(r)) : "Sin ubicación."} <span class="muted">${esc(nota)}</span></p>
+    ${dis ? "" : `<div class="btns" style="margin-top:0"><button class="btn" id="btn_ubic" type="button">${tieneUbic(r) ? "Tomar de nuevo" : "Tomar ubicación"}</button>
+    ${tieneUbic(r) ? `<button class="btn" id="btn_ubic_q" type="button">Quitar</button>` : ""}</div>`}
+    <div id="ubic_msg"></div>`;
+}
+// Pide la posición al aparato. listo() repinta la pantalla.
+function enlazarUbic(r, dec, listo) {
+  const b = $("#btn_ubic"), q = $("#btn_ubic_q"), msg = t => { $("#ubic_msg").innerHTML = t ? `<div class="aviso warn">${esc(t)}</div>` : ""; };
+  if (q) q.onclick = () => { r.latitud = r.longitud = r.precision_m = null; listo(); };
+  if (!b) return;
+  b.onclick = () => {
+    if (!("geolocation" in navigator)) return msg("Este equipo no da la ubicación. Puede guardar sin ella.");
+    b.disabled = true; b.textContent = "Buscando la ubicación…"; msg("");
+    navigator.geolocation.getCurrentPosition(p => {
+      r.latitud = p.coords.latitude.toFixed(dec); r.longitud = p.coords.longitude.toFixed(dec);
+      r.precision_m = Math.round(p.coords.accuracy); listo();
+    }, e => {
+      b.disabled = false; b.textContent = "Tomar ubicación";
+      msg(e.code === 1 ? "El permiso de ubicación está negado. Actívelo en el navegador o guarde sin ubicación."
+        : e.code === 3 ? "El aparato tardó demasiado en ubicarse. Pruebe al aire libre o guarde sin ubicación."
+        : "No se pudo obtener la ubicación. Puede guardar sin ella.");
+    }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
+  };
+}
+// En el paquete, solo si se tomó: un registro sin ubicación sale igual que antes.
+function ubicAPaquete(o, r) {
+  if (!tieneUbic(r)) return o;
+  o.latitud = String(r.latitud); o.longitud = String(r.longitud);
+  o.precision_m = r.precision_m == null || r.precision_m === "" ? null : Math.round(Number(r.precision_m));
+  return o;
+}
+
 /* ── Nuevo registro según la pestaña ──────────────────────────────────────── */
 function nuevoVid(c) {
   if (Estado.tab === "senales") {
@@ -938,7 +983,8 @@ function pantallaSenal() {
     <div><label class="f" for="s_fuente">Fuente</label><select id="s_fuente" data-v="fuente" ${dis}>${opt(cat.fuentes, r.fuente, "Elija")}</select></div></div>
     <label class="f" for="s_desc">Qué se observó (sin nombres ni cédulas)</label><textarea id="s_desc" data-v="descripcion" ${dis}>${esc(r.descripcion)}</textarea>
     <div class="row"><div><label class="f" for="s_av">Se avisó a</label><input type="text" id="s_av" data-v="avisado_a" value="${esc(r.avisado_a)}" ${dis}></div>
-    <div><label class="f" for="s_avh">Hora del aviso</label><input type="time" id="s_avh" data-v="avisado_hora" value="${esc(r.avisado_hora)}" ${dis}></div></div></div>
+    <div><label class="f" for="s_avh">Hora del aviso</label><input type="time" id="s_avh" data-v="avisado_hora" value="${esc(r.avisado_hora)}" ${dis}></div></div>
+    ${bloqueUbic(r, DEC_SENAL, bloq)}</div>
   <div class="card"><div id="val_sen">${bloq ? "" : avisos(v)}</div>
     <div class="btns">${bloq ? "" : `<button class="btn pri" id="btn_gsen" type="button" ${v.e.length ? "disabled" : ""}>Guardar la señal</button>`}
     ${guardada ? `<button class="btn bad" id="btn_eliminar" type="button">Eliminar de este equipo</button>` : ""}</div></div>`;
@@ -946,6 +992,7 @@ function pantallaSenal() {
   const refrescar = () => { const v = validarSenal(c, r); $("#val_sen").innerHTML = avisos(v); const b = $("#btn_gsen"); if (b) b.disabled = v.e.length > 0; };
   $("#app").querySelectorAll("[data-v]").forEach(el => el.oninput = el.onchange = () => { r[el.dataset.v] = el.value; refrescar(); });
   $("#s_punto").onchange = e => { const p = puntosVid(c).find(x => x.key === e.target.value); r.punto_id = p ? p.id : null; r.punto_uuid = p ? p.uuid : null; };
+  enlazarUbic(r, DEC_SENAL, () => { const y = window.scrollY; pantallaSenal(); window.scrollTo(0, y); });
   const g = $("#btn_gsen");
   if (g) g.onclick = async () => {
     if (validarSenal(c, r).e.length) return;
@@ -991,7 +1038,8 @@ function pantallaPunto() {
     <label class="f" for="p_nombre">Nombre</label><input type="text" id="p_nombre" data-v="nombre" value="${esc(r.nombre)}" placeholder="ALBERGUE ESCUELA DE SAN PABLO" ${dis}>
     <label class="f" for="p_pob">Personas alojadas (solo albergues)</label><input type="number" id="p_pob" data-v="poblacion" inputmode="numeric" min="0" step="1" value="${esc(r.poblacion)}" ${dis}>
     ${geo.length ? `<div class="row"><div><label class="f" for="p_dis">Distrito</label><select id="p_dis" ${dis}><option value="">Elija</option>${distritos.map(d => `<option ${d === r.distrito ? "selected" : ""}>${esc(d)}</option>`).join("")}</select></div>
-    <div><label class="f" for="p_cor">Corregimiento</label><select id="p_cor" ${dis}><option value="">Elija</option>${corrs.map(g => `<option value="${esc(g.cod)}" ${g.cod === r.codigo_geo ? "selected" : ""}>${esc(g.c)}</option>`).join("")}</select></div></div>` : ""}</div>
+    <div><label class="f" for="p_cor">Corregimiento</label><select id="p_cor" ${dis}><option value="">Elija</option>${corrs.map(g => `<option value="${esc(g.cod)}" ${g.cod === r.codigo_geo ? "selected" : ""}>${esc(g.c)}</option>`).join("")}</select></div></div>` : ""}
+    ${bloqueUbic(r, DEC_PUNTO, bloq)}</div>
   <div class="card"><div id="val_pto">${bloq ? "" : avisos(v)}</div>
     <div class="btns">${bloq ? "" : `<button class="btn pri" id="btn_gpto" type="button" ${v.e.length ? "disabled" : ""}>Guardar el punto</button>`}
     ${guardado && !usado ? `<button class="btn bad" id="btn_eliminar" type="button">Eliminar</button>` : ""}</div>
@@ -1003,6 +1051,7 @@ function pantallaPunto() {
     r.tipo = b.dataset.v; g.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b))); refrescar(); }));
   const ds = $("#p_dis"); if (ds) ds.onchange = e => { r.distrito = e.target.value; r.codigo_geo = ""; r.corregimiento = ""; const y = window.scrollY; pantallaPunto(); window.scrollTo(0, y); };
   const cs = $("#p_cor"); if (cs) cs.onchange = e => { const g = geo.find(z => z.cod === e.target.value); r.codigo_geo = g ? g.cod : ""; r.corregimiento = g ? g.c : ""; };
+  enlazarUbic(r, DEC_PUNTO, () => { const y = window.scrollY; pantallaPunto(); window.scrollTo(0, y); });
   const g = $("#btn_gpto");
   if (g) g.onclick = async () => {
     if (validarPunto(c, r).e.length) return;
@@ -1037,10 +1086,10 @@ function senalAPaquete(r) {
     n_personas: r.n_personas === "" || r.n_personas == null ? null : Number(r.n_personas), fuente: r.fuente, descripcion: r.descripcion || "",
     avisado_a: r.avisado_a || "", avisado_en: /^\d{2}:\d{2}$/.test(r.avisado_hora || "") ? r.fecha + "T" + r.avisado_hora : null };
   if (r.punto_uuid) o.punto_uuid = r.punto_uuid;
-  return o;
+  return ubicAPaquete(o, r);
 }
-const puntoAPaquete = r => ({ uuid: r.uuid, tipo: r.tipo, nombre: r.nombre, poblacion: r.poblacion === "" || r.poblacion == null ? null : Number(r.poblacion),
-  distrito: r.distrito || null, corregimiento: r.corregimiento || null, codigo_geo: r.codigo_geo || null, creado_en: r.creado_en });
+const puntoAPaquete = r => ubicAPaquete({ uuid: r.uuid, tipo: r.tipo, nombre: r.nombre, poblacion: r.poblacion === "" || r.poblacion == null ? null : Number(r.poblacion),
+  distrito: r.distrito || null, corregimiento: r.corregimiento || null, codigo_geo: r.codigo_geo || null, creado_en: r.creado_en }, r);
 // El paquete que lee vid_leer_paquete(): mismo esquema y misma huella.
 async function paqueteVid(c, dias, sen, pts) {
   const p = { schema_id: c.paquete.schema_id, schema_version: c.paquete.schema_version, evento_id: c.evento.id, evento: c.evento.nombre,
