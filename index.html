@@ -120,7 +120,7 @@ details.sind[open] summary::after{content:"\2212"}
 /* ============================================================================
    MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
    ========================================================================== */
-const APP_VERSION = "1.4.4";
+const APP_VERSION = "1.4.5";
 const CFG_SCHEMA = "epicssch.campo.config";
 const PKG_SCHEMA = "epicssch.campo.paquete";
 const CIF_SCHEMA = "epicssch.campo.cifrado";
@@ -1458,10 +1458,50 @@ function vcEdad(fnac, ref) {
   return { valor: Math.floor(meses / 12), unidad: "años" };
 }
 const vcAnios = d => d.edad_unidad === "años" ? Number(d.edad_valor) : 0;
-function nuevaDosisVc(c) {
+/* Vacunadores y lotes de la jornada (tablero 1.4.5, 28-oct-2026). La configuración
+   trae jornada.vacunadores [{nombre, registro}] y jornada.lotes [{vacuna, lote,
+   fabricante, caducidad}], elegidos del banco de vacunas. En cada dosis el lote y el
+   vacunador son seleccionables, con «Otro» para escribirlos. Una configuración
+   anterior no los trae: lote y vacunador siguen como texto libre. */
+const VC_OTRO = "__otro__";
+const vcVacs = c => (c.jornada && c.jornada.vacunadores) || [];
+const vcLotesDe = (c, vacuna) => ((c.jornada && c.jornada.lotes) || []).filter(l => l.vacuna === vacuna);
+const vcFechaL = f => f ? f.slice(8, 10) + "/" + f.slice(5, 7) + "/" + f.slice(0, 4) : "";
+const vcVacDe = (c, nombre) => vcVacs(c).find(v => normNom(v.nombre) === normNom(nombre));
+// El fabricante del catálogo que corresponde al que anotó el banco (por código o rótulo).
+const vcFabDe = (c, txt) => { const t = normNom(txt); return t ? ((vcCat(c, "fabricante").find(x => normNom(x.code) === t || normNom(x.label) === t) || {}).code || "") : ""; };
+function nuevaDosisVc(c, previa) {
+  // El vacunador: el de la dosis anterior de la persona, el último usado, el único configurado o quien usa el equipo.
+  // Sin vacunadores configurados, como hasta la 1.4.4: quien usa el equipo.
+  const vs = vcVacs(c);
+  let nom = !vs.length ? Estado.entrevistador : previa && previa.vacunador ? previa.vacunador
+    : (Estado.vcUltVac && vcVacDe(c, Estado.vcUltVac) ? Estado.vcUltVac : "") || (vs.length === 1 ? vs[0].nombre : "");
+  if (vs.length && !nom && vcVacDe(c, Estado.entrevistador)) nom = Estado.entrevistador;
+  const conf = vcVacDe(c, nom);
+  const reg = previa && previa.vacunador === nom ? previa.vacunador_registro || "" : conf ? conf.registro : "";
   return { dosis_uuid: uuid(), vacuna: "", dosis: "", fuente_dato: "aplicada_actividad", aplicada_durante_actividad: true,
     fecha_aplicacion: c.jornada.fecha || hoyISO(), lote: "", fabricante: "", sitio_aplicacion: "", via_administracion: "",
-    vacunador: Estado.entrevistador, observacion: "" };
+    vacunador: conf ? conf.nombre : nom, vacunador_registro: reg, observacion: "" };
+}
+// ¿El valor guardado está fuera de la lista configurada? Entonces se muestra como «Otro».
+const vcLoteOtro = (c, x) => !!x.lote_otro || (!!x.lote && !vcLotesDe(c, x.vacuna).some(l => l.lote === x.lote));
+const vcVacOtro = (c, x) => !!x.vacunador_otro || (!!x.vacunador && !vcVacDe(c, x.vacunador));
+function vcLoteHtml(c, i, x) {
+  const pre = "dosis." + i + ".", ls = vcLotesDe(c, x.vacuna);
+  if (!ls.length) return pfTexto(pre + "lote", "Lote", x.lote);
+  const otro = vcLoteOtro(c, x), v = otro ? VC_OTRO : x.lote;
+  return `<label class="f" for="vc_lote_${i}">Lote</label><select id="vc_lote_${i}" data-lote="${i}"><option value="">Elija</option>${ls.map(l =>
+    `<option value="${esc(l.lote)}" ${l.lote === v ? "selected" : ""}>${esc(l.lote + (l.caducidad ? " · vence " + vcFechaL(l.caducidad) : ""))}</option>`).join("")}
+    <option value="${VC_OTRO}" ${otro ? "selected" : ""}>Otro lote (escribirlo)</option></select>${otro ? pfTexto(pre + "lote", "Lote (otro)", x.lote) : ""}`;
+}
+function vcVacunadorHtml(c, i, x) {
+  const pre = "dosis." + i + ".", vs = vcVacs(c);
+  if (!vs.length) return pfTexto(pre + "vacunador", "Vacunador", x.vacunador);
+  const otro = vcVacOtro(c, x), conf = otro ? null : vcVacDe(c, x.vacunador);
+  return `<label class="f" for="vc_vac_${i}">Vacunador</label><select id="vc_vac_${i}" data-vacsel="${i}"><option value="">Elija</option>${vs.map(v =>
+    `<option value="${esc(v.nombre)}" ${conf && conf.nombre === v.nombre ? "selected" : ""}>${esc(v.nombre + (v.registro ? " · " + v.registro : ""))}</option>`).join("")}
+    <option value="${VC_OTRO}" ${otro ? "selected" : ""}>Otro vacunador (escribirlo)</option></select>${otro ? `<div class="row"><div>${pfTexto(pre + "vacunador", "Vacunador (otro)", x.vacunador)}</div>
+    <div>${pfTexto(pre + "vacunador_registro", "Registro profesional", x.vacunador_registro)}</div></div>` : ""}`;
 }
 function nuevoVc(c) {
   Estado.editando = { uuid: uuid(), cfg: cfgId(c), tipo_reg: "PERSONA", estado: "BORRADOR", entrevistador: Estado.entrevistador,
@@ -1491,6 +1531,8 @@ function validarVc(c, r) {
       if (!x.fecha_aplicacion) e.push(`Dosis ${n}: falta la fecha de aplicación.`);
       if (!String(x.lote || "").trim()) e.push(`Dosis ${n}: falta el lote.`);
       if (x.fecha_aplicacion && x.fecha_aplicacion > hoyISO()) e.push(`Dosis ${n}: la fecha de aplicación es futura.`);
+      if (x.lote && vcLotesDe(c, x.vacuna).length && vcLoteOtro(c, x)) a.push(`Dosis ${n}: el lote ${x.lote} no es de los que se configuraron para esta vacuna.`);
+      if (vcVacs(c).length && !String(x.vacunador || "").trim()) a.push(`Dosis ${n}: elija el vacunador.`);
     }
     const vac = vcCat(c, "vacunas").find(v => v.code === x.vacuna);
     if (vac && x.via_administracion && vac.vias && !vac.vias.includes(x.via_administracion)) a.push(`Dosis ${n}: la vía no es la habitual para ${vac.label}.`);
@@ -1503,7 +1545,9 @@ function cabeceraVc(c) {
   const j = c.jornada;
   return `<div class="card"><h1>${esc(c.nombre)}</h1><p class="muted">${esc(j.instalacion.nombre)} · ${esc(j.modalidad.label)} · ${esc(j.contexto_uso.label)}</p>
     <p class="small muted">${esc([j.comunidad, j.corregimiento, j.distrito].filter(Boolean).join(", "))} · ${esc(c.ref)}</p>${j.responsable ? `
-    <p class="small">Responsable de la vacunación: <b>${esc(j.responsable)}</b></p>` : ""}</div>`;
+    <p class="small">Responsable de la vacunación: <b>${esc(j.responsable)}</b></p>` : ""}${vcVacs(c).length ? `
+    <p class="small muted">Vacunadores: ${esc(vcVacs(c).map(v => v.nombre + (v.registro ? " (" + v.registro + ")" : "")).join("; "))}</p>` : ""}${(j.lotes || []).length ? `
+    <p class="small muted">Lotes: ${esc(j.lotes.map(l => vcLab(c, "vacunas", l.vacuna) + " " + l.lote).join("; "))}</p>` : ""}</div>`;
 }
 function pantallaVcPersonas() {
   const c = cfgActiva(), pp = regsDe(c, "PERSONA");
@@ -1540,9 +1584,9 @@ function pantallaVcEdicion() {
         <span class="small muted">${esc([vcLab(c, "dosis", x.dosis), x.aplicada_durante_actividad ? "aplicada hoy" : vcLab(c, "fuente_dato", x.fuente_dato), ddmm(x.fecha_aplicacion)].filter(Boolean).join(" · "))}</span></span></summary>
       <div class="row"><div>${vcSelect(c, pre + "vacuna", "Vacuna", "vacunas", x.vacuna)}</div><div>${vcSelect(c, pre + "dosis", "Dosis", "dosis", x.dosis)}</div></div>
       <div class="row"><div>${vcSelect(c, pre + "fuente_dato", "Fuente del dato", "fuente_dato", x.fuente_dato)}</div><div>${pfFecha(pre + "fecha_aplicacion", "Fecha de aplicación", x.fecha_aplicacion)}</div></div>
-      ${x.aplicada_durante_actividad ? `<div class="row"><div>${pfTexto(pre + "lote", "Lote", x.lote)}</div><div>${vcSelect(c, pre + "fabricante", "Fabricante", "fabricante", x.fabricante)}</div></div>
+      ${x.aplicada_durante_actividad ? `<div class="row"><div>${vcLoteHtml(c, i, x)}</div><div>${vcSelect(c, pre + "fabricante", "Fabricante", "fabricante", x.fabricante)}</div></div>
       <div class="row"><div>${vcSelect(c, pre + "sitio_aplicacion", "Sitio de aplicación", "sitio_aplicacion", x.sitio_aplicacion)}</div><div>${vcSelect(c, pre + "via_administracion", "Vía", null, x.via_administracion, vias)}</div></div>
-      ${pfTexto(pre + "vacunador", "Vacunador", x.vacunador)}` : ""}
+      ${vcVacunadorHtml(c, i, x)}` : ""}
       ${pfTexto(pre + "observacion", "Observación", x.observacion)}
       <div class="btns"><button class="btn bad" type="button" data-quitar="${i}">Quitar esta dosis</button></div></details>`;
   }).join("");
@@ -1595,8 +1639,31 @@ function enlazarVc() {
     if (k === "proc.distrito") { r.proc.cod_geo = ""; r.proc.corregimiento = ""; return redibujar(); }
     if (k === "proc.cod_geo") { const g = (c.geografia || []).find(z => z.cod === val); r.proc.corregimiento = g ? g.c : ""; }
     if (/^dosis\.\d+\.fuente_dato$/.test(k)) { setRuta(r, k.replace(/fuente_dato$/, "aplicada_durante_actividad"), val === "aplicada_actividad"); return redibujar(); }
-    if (/^dosis\.\d+\.(vacuna|dosis)$/.test(k) || k === "persona.tipo_identificacion") return redibujar();
+    if (/^dosis\.\d+\.vacuna$/.test(k)) {
+      // Un lote elegido de la lista de otra vacuna no vale para la nueva.
+      const x = r.dosis[+k.split(".")[1]];
+      if (x.lote && !x.lote_otro && (c.jornada.lotes || []).some(l => l.lote === x.lote) && !vcLotesDe(c, x.vacuna).some(l => l.lote === x.lote)) x.lote = "";
+      return redibujar();
+    }
+    if (/^dosis\.\d+\.dosis$/.test(k) || k === "persona.tipo_identificacion") return redibujar();
     refrescar();
+  });
+  $("#app").querySelectorAll("[data-lote]").forEach(el => el.onchange = () => {
+    const x = r.dosis[+el.dataset.lote];
+    if (el.value === VC_OTRO) { x.lote_otro = true; x.lote = ""; }
+    else {
+      x.lote_otro = false; x.lote = el.value;
+      const l = vcLotesDe(c, x.vacuna).find(z => z.lote === el.value);
+      if (l && !x.fabricante) x.fabricante = vcFabDe(c, l.fabricante);
+    }
+    redibujar();
+  });
+  $("#app").querySelectorAll("[data-vacsel]").forEach(el => el.onchange = () => {
+    const x = r.dosis[+el.dataset.vacsel];
+    if (el.value === VC_OTRO) { x.vacunador_otro = true; x.vacunador = ""; x.vacunador_registro = ""; }
+    else { const v = vcVacDe(c, el.value); x.vacunador_otro = false; x.vacunador = v ? v.nombre : ""; x.vacunador_registro = v ? v.registro : ""; }
+    if (x.vacunador) Estado.vcUltVac = x.vacunador;
+    redibujar();
   });
   $("#app").querySelectorAll("[data-seg]").forEach(g => g.querySelectorAll("button").forEach(b => b.onclick = () => {
     const tipo = g.dataset.seg.slice(0, 2), ruta = g.dataset.seg.slice(3);
@@ -1614,7 +1681,7 @@ function enlazarVc() {
   });
   $("#app").querySelectorAll("details[data-mu]").forEach(d => d.ontoggle = () => { if (d.open) Estado.vcAbiertos.add(d.dataset.mu); else Estado.vcAbiertos.delete(d.dataset.mu); });
   $("#app").querySelectorAll("[data-quitar]").forEach(b => b.onclick = () => confirmar("Se quita esta dosis.", "Quitar", async () => { r.dosis.splice(+b.dataset.quitar, 1); redibujar(); }));
-  $("#btn_add_d").onclick = () => { const x = nuevaDosisVc(c); r.dosis.push(x); Estado.vcAbiertos.add(x.dosis_uuid); redibujar(); };
+  $("#btn_add_d").onclick = () => { const x = nuevaDosisVc(c, r.dosis[r.dosis.length - 1]); r.dosis.push(x); Estado.vcAbiertos.add(x.dosis_uuid); redibujar(); };
   const guardar = async estado => {
     r.estado = estado; r.exportado_en = null; await guardarReg(r); Estado.regs = await leerRegs();
     Estado.editando = null; Estado.aviso = estado === "COMPLETA" ? "Persona guardada." : "Borrador guardado.";
