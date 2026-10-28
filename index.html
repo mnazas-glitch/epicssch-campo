@@ -81,6 +81,7 @@ table{border-collapse:collapse;width:100%;font-size:.88rem}
 th,td{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
 th{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
 td.n{text-align:right;font-variant-numeric:tabular-nums}
+.totvac{margin-top:10px} .totvac th.n{text-align:right} .totvac tfoot th{font-size:.9rem;text-transform:none;letter-spacing:0;color:var(--fg);border-bottom:0;border-top:2px solid var(--line);font-variant-numeric:tabular-nums}
 .fab{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));z-index:6}
 .fab .btn{box-shadow:0 4px 14px rgba(0,0,0,.18)}
 .secnav{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px}
@@ -119,7 +120,7 @@ details.sind[open] summary::after{content:"\2212"}
 /* ============================================================================
    MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
    ========================================================================== */
-const APP_VERSION = "1.4.2";
+const APP_VERSION = "1.4.4";
 const CFG_SCHEMA = "epicssch.campo.config";
 const PKG_SCHEMA = "epicssch.campo.paquete";
 const CIF_SCHEMA = "epicssch.campo.cifrado";
@@ -1429,7 +1430,13 @@ function pantallaEnviarPf() {
    - cada dosis: vacuna y dosis; si se aplicó hoy, fecha y lote.
    Catálogos: los del formulario (catalogos_pai_vacunacion.json), en la configuración.
    ========================================================================== */
-const vcCat = (c, l) => (c.catalogos && c.catalogos[l]) || [];
+// Etiquetas corregidas después de repartir configuraciones: valen aunque el archivo traiga la vieja.
+// 28-oct-2026: en la fuente del dato de una dosis, «Registro institucional» pasa a «Registro diario de vacunación».
+const VC_ETIQUETAS = { fuente_dato: { registro_institucional: "Registro diario de vacunación" } };
+const vcCat = (c, l) => {
+  const ops = (c.catalogos && c.catalogos[l]) || [], m = VC_ETIQUETAS[l];
+  return m ? ops.map(x => m[x.code] ? Object.assign({}, x, { label: m[x.code] }) : x) : ops;
+};
 const vcLab = (c, l, code) => (vcCat(c, l).find(x => x.code === code) || { label: code || "" }).label;
 // La lista de vacunas se muestra en orden alfabético, con «Otra» al final (pedido del
 // 28-oct-2026 para el piloto del PAI). Se ordena aquí y no en el catálogo para que valga
@@ -1495,17 +1502,28 @@ function validarVc(c, r) {
 function cabeceraVc(c) {
   const j = c.jornada;
   return `<div class="card"><h1>${esc(c.nombre)}</h1><p class="muted">${esc(j.instalacion.nombre)} · ${esc(j.modalidad.label)} · ${esc(j.contexto_uso.label)}</p>
-    <p class="small muted">${esc([j.comunidad, j.corregimiento, j.distrito].filter(Boolean).join(", "))} · ${esc(c.ref)}</p></div>`;
+    <p class="small muted">${esc([j.comunidad, j.corregimiento, j.distrito].filter(Boolean).join(", "))} · ${esc(c.ref)}</p>${j.responsable ? `
+    <p class="small">Responsable de la vacunación: <b>${esc(j.responsable)}</b></p>` : ""}</div>`;
 }
 function pantallaVcPersonas() {
   const c = cfgActiva(), pp = regsDe(c, "PERSONA");
   const aplicadas = pp.reduce((n, r) => n + (r.dosis || []).filter(x => x.aplicada_durante_actividad).length, 0);
+  // 28-oct-2026: total de dosis aplicadas hoy por vacuna, en orden alfabético, y el gran total (borradores incluidos).
+  const porVac = {};
+  pp.forEach(r => (r.dosis || []).filter(x => x.aplicada_durante_actividad && x.vacuna).forEach(x => { porVac[x.vacuna] = (porVac[x.vacuna] || 0) + 1; }));
+  const filasVac = vcAlfa(Object.keys(porVac).map(k => ({ code: k, label: vcLab(c, "vacunas", k) })))
+    .map(v => `<tr><td>${esc(v.label)}</td><td class="n">${porVac[v.code]}</td></tr>`).join("");
+  const tablaVac = filasVac ? `<table class="totvac"><thead><tr><th>Vacuna</th><th class="n">Dosis aplicadas</th></tr></thead><tbody>${filasVac}</tbody>
+      <tfoot><tr><th>Total de la jornada</th><th class="n">${aplicadas}</th></tr></tfoot></table>` : "";
   $("#app").innerHTML = `${Estado.aviso ? `<div class="aviso ok">${esc(Estado.aviso)}</div>` : ""}${avisoInstalar()}${cabeceraVc(c)}
-    <div class="card"><p>${plural(pp.length, "persona registrada", "personas registradas")} · ${plural(aplicadas, "dosis aplicada", "dosis aplicadas")} en esta jornada.</p></div>
+    <div class="card"><p>${plural(pp.length, "persona registrada", "personas registradas")} · ${plural(aplicadas, "dosis aplicada", "dosis aplicadas")} en esta jornada.</p>${tablaVac}</div>
     <div class="card lista">${pp.map(r => {
-      const ap = (r.dosis || []).filter(x => x.aplicada_durante_actividad).map(x => vcLab(c, "vacunas", x.vacuna)).join(", ");
+      // 28-oct-2026: la fila dice cuántas dosis se aplicaron hoy y cuántas se registraron de antecedente.
+      const ds = r.dosis || [], hoy = ds.filter(x => x.aplicada_durante_actividad), antes = ds.length - hoy.length;
+      const ap = hoy.length ? plural(hoy.length, "dosis aplicada hoy", "dosis aplicadas hoy") + ": " + hoy.map(x => vcLab(c, "vacunas", x.vacuna)).join(", ")
+        : r.motivo_no_vacunacion ? "No vacunada: " + vcLab(c, "motivo_no_vacunacion", r.motivo_no_vacunacion) : "Sin dosis aplicada hoy";
       return filaPf(r, [r.persona.nombre, r.persona.apellido].filter(Boolean).join(" ") || "(sin nombre)",
-        (ap ? "Aplicadas: " + ap : r.motivo_no_vacunacion ? "No vacunada: " + vcLab(c, "motivo_no_vacunacion", r.motivo_no_vacunacion) : "Sin dosis aplicada"));
+        ap + (antes ? " · " + plural(antes, "dosis de antecedente", "dosis de antecedente") : ""));
     }).join("") || `<p class="muted">Todavía no hay personas. Toque <b>+ Persona</b>.</p>`}</div>`;
   Estado.aviso = null; abrirPf();
 }
