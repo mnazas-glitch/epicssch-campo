@@ -155,7 +155,7 @@ details.sind[open] summary::after{content:"\2212"}
 /* ============================================================================
    MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
    ========================================================================== */
-const APP_VERSION = "1.4.7";
+const APP_VERSION = "1.4.8";
 const CFG_SCHEMA = "epicssch.campo.config";
 const PKG_SCHEMA = "epicssch.campo.paquete";
 const CIF_SCHEMA = "epicssch.campo.cifrado";
@@ -1906,7 +1906,7 @@ function rdvBloque(n, x, sombra) {
     <td rowspan="2" class="${s}">${rdvAz(cn[0] || "")}</td>${vac}</tr>
     <tr class="b2"><td class="etq${s}">No. Provisional</td><td class="etq${s}">No. De Cédula</td></tr>
     <tr class="b1"><td class="${s}">${t("nombre")}</td><td class="${s}">${t("apellido")}</td><td colspan="2" class="izq${s}">Email: ${t("email")}</td><td rowspan="2" class="${s}">${rdvAz(cn.slice(1).join(", "))}</td></tr>
-    <tr class="b2"><td class="etq${s}">Nombre</td><td class="etq${s}">Apellido</td><td colspan="2" class="izq${s}">Tel: ${t("telefono")}</td></tr></tbody>`;
+    <tr class="b2"><td class="etq${s}">Nombre</td><td class="etq${s}">Apellido</td><td colspan="2" class="izq${s}${x && x.telefono ? " az" : ""}">Tel: ${x ? esc(x.telefono) : ""}</td></tr></tbody>`;
 }
 function rdvFrente(prep, fecha) {
   // La opción elegida, con su lugar, va en azul: es lo llenado.
