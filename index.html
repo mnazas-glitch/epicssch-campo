@@ -119,7 +119,7 @@ details.sind[open] summary::after{content:"\2212"}
 /* ============================================================================
    MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
    ========================================================================== */
-const APP_VERSION = "1.4.1";
+const APP_VERSION = "1.4.2";
 const CFG_SCHEMA = "epicssch.campo.config";
 const PKG_SCHEMA = "epicssch.campo.paquete";
 const CIF_SCHEMA = "epicssch.campo.cifrado";
@@ -1431,8 +1431,13 @@ function pantallaEnviarPf() {
    ========================================================================== */
 const vcCat = (c, l) => (c.catalogos && c.catalogos[l]) || [];
 const vcLab = (c, l, code) => (vcCat(c, l).find(x => x.code === code) || { label: code || "" }).label;
+// La lista de vacunas se muestra en orden alfabético, con «Otra» al final (pedido del
+// 28-oct-2026 para el piloto del PAI). Se ordena aquí y no en el catálogo para que valga
+// también con las configuraciones ya repartidas.
+const vcAlfa = ops => ops.slice().sort((a, b) => (a.code === "otra") - (b.code === "otra") ||
+  String(a.label).localeCompare(String(b.label), "es", { sensitivity: "base", numeric: true }));
 function vcSelect(c, k, rot, lista, v, opciones) {
-  const ops = opciones || vcCat(c, lista);
+  const ops = opciones || (lista === "vacunas" ? vcAlfa(vcCat(c, lista)) : vcCat(c, lista));
   return `<label class="f" for="${idDe(k)}">${esc(rot)}</label><select id="${idDe(k)}" data-k="${k}"><option value="">Elija</option>${ops.map(x =>
     `<option value="${esc(x.code)}" ${x.code === v ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select>`;
 }
