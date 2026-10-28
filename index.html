@@ -106,6 +106,41 @@ details.sind[open] summary::after{content:"\2212"}
 .g3 input{text-align:center;padding:6px 4px}
 .pill.PEND{background:var(--warn-soft);color:var(--warn)} .pill.OK{background:var(--ok-soft);color:var(--ok)}
 .oculto{display:none!important}
+/* Registro diario de vacunación: la hoja oficial, siempre en blanco y negro, oficio horizontal. */
+.rdv-vista{overflow:auto;background:#fff;border:1px solid var(--line);border-radius:var(--radius);padding:8px;margin-bottom:12px}
+.rdv{background:#fff;color:#000;font-family:Arial,Helvetica,sans-serif;font-size:7pt;line-height:1.1}
+.rdv-cara{width:343mm;margin:0 auto 8mm}
+.rdv table{table-layout:fixed;width:100%;border-collapse:collapse;font-size:7pt}
+.rdv th,.rdv td{border:.6pt solid #000;padding:0 1px;text-align:center;vertical-align:middle;color:#000;font-size:inherit;font-weight:400;text-transform:none;letter-spacing:0;line-height:1.1;overflow:hidden;overflow-wrap:anywhere}
+.rdv thead th{font-size:6pt;font-weight:700}
+.rdv tr.h1{height:6mm} .rdv tr.h2{height:13mm} .rdv tr.h3{height:15mm}
+.rdv tr.b1{height:7mm} .rdv tr.b2{height:3.6mm}
+.rdv th.v div,.rdv .vt{-webkit-writing-mode:vertical-rl;writing-mode:vertical-rl;transform:rotate(180deg);display:inline-block;max-height:33mm;text-align:left}
+.rdv .vt{max-height:24mm;font-size:6pt}
+.rdv th.ley{text-align:left;font-size:5pt;font-weight:400}
+.rdv .az{color:#0033CC} .rdv td.vac{font-size:6pt;overflow-wrap:normal;padding:0} .rdv td.etq{font-size:5.5pt} .rdv td.izq{text-align:left} .rdv td.num{font-weight:700}
+.rdv .sb,.rdv .sv{background:#ededed}
+.rdv tbody.per{border-bottom:1.6pt solid #000}
+.rdv-tit{display:flex;align-items:center;gap:4mm;margin-bottom:1.5mm}
+.rdv-ins{flex:1;text-align:center;font-weight:700;font-size:9pt;line-height:1.3}
+.rdv-modbox{width:12mm;height:12mm;border:1.6pt solid #000;display:flex;align-items:center;justify-content:center;font-size:16pt;font-weight:700}
+.rdv-mod{width:52mm;font-size:6.5pt;line-height:1.25}
+.rdv-enc{display:flex;align-items:flex-end;gap:2mm;font-size:8pt;margin-bottom:1.5mm}
+.rdv-enc span{border-bottom:.6pt solid #000;min-width:10mm;padding:0 1mm} .rdv-enc span.l{flex:1}
+.rdv-nota{font-size:6.5pt;margin:1mm 0 0} .rdv-firma{font-size:8pt;margin:3mm 0 0 18mm}
+.rdv-sincol table{width:auto;min-width:60%} .rdv-sincol td,.rdv-sincol th{padding:1mm 2mm;text-align:left}
+.rdv-sincol h3{font-size:10pt;margin:0 0 2mm}
+@page{size:legal landscape;margin:6mm}
+@media print{
+  html,body{background:#fff!important}
+  body{padding:0}
+  header.bar,nav.tabs,.fab,.no-print{display:none!important}
+  main{max-width:none;margin:0;padding:0}
+  .rdv-vista{overflow:visible;border:0;border-radius:0;padding:0;margin:0}
+  .rdv-cara{width:auto;margin:0;break-after:page;page-break-after:always}
+  .rdv-cara:last-child{break-after:auto;page-break-after:auto}
+  .rdv *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+}
 </style>
 </head>
 <body>
@@ -120,7 +155,7 @@ details.sind[open] summary::after{content:"\2212"}
 /* ============================================================================
    MOTOR COMÚN (almacenamiento cifrado, clave de acceso, exportación cifrada)
    ========================================================================== */
-const APP_VERSION = "1.4.5";
+const APP_VERSION = "1.4.7";
 const CFG_SCHEMA = "epicssch.campo.config";
 const PKG_SCHEMA = "epicssch.campo.paquete";
 const CIF_SCHEMA = "epicssch.campo.cifrado";
@@ -327,13 +362,13 @@ function pintarTabs(c) {
   const t = c ? (TABS[c.tipo] || TABS.BROTE) : [["brotes", "Brotes y eventos"]];
   if (!t.some(x => x[0] === Estado.tab)) Estado.tab = t[0][0];
   $("#tabs").innerHTML = t.map(([k, n]) => `<button type="button" role="tab" data-tab="${k}" aria-selected="${k === Estado.tab}">${n}</button>`).join("");
-  $("#tabs").querySelectorAll("button").forEach(b => b.onclick = () => { Estado.tab = b.dataset.tab; Estado.editando = null; pintar(); });
+  $("#tabs").querySelectorAll("button").forEach(b => b.onclick = () => { Estado.tab = b.dataset.tab; Estado.editando = null; Estado.vcRdv = false; pintar(); });
 }
 function ponerFab(c) {
   let txt = null;
   if (c && !Estado.editando) {
     if (c.tipo === "VID") txt = { dias: "+ Capturar un día", senales: "+ Nueva señal", puntos: "+ Punto nuevo" }[Estado.tab] || null;
-    else if (c.tipo === "VACUNACION") txt = Estado.tab === "personas" ? "+ Persona" : null;
+    else if (c.tipo === "VACUNACION") txt = Estado.tab === "personas" && !Estado.vcRdv ? "+ Persona" : null;
     else if (c.tipo === "PERIFOCO") txt = Estado.tab === "viviendas" ? "+ Nueva vivienda" : (Estado.tab === "caso" && !regsDe(c, "CASO").length) ? "+ Caso índice" : null;
     else if (Estado.tab === "lista") txt = "+ Nueva entrevista";
   }
@@ -1431,8 +1466,9 @@ function pantallaEnviarPf() {
    Catálogos: los del formulario (catalogos_pai_vacunacion.json), en la configuración.
    ========================================================================== */
 // Etiquetas corregidas después de repartir configuraciones: valen aunque el archivo traiga la vieja.
-// 28-oct-2026: en la fuente del dato de una dosis, «Registro institucional» pasa a «Registro diario de vacunación».
-const VC_ETIQUETAS = { fuente_dato: { registro_institucional: "Registro diario de vacunación" } };
+// 28-oct-2026 (1.4.6): «Registro diario de vacunación» se leía como «va al registro diario» y era un antecedente:
+// la dosis no entraba a la hoja. La aplicada dice ahora que va al registro diario y la otra que es antecedente.
+const VC_ETIQUETAS = { fuente_dato: { aplicada_actividad: "Aplicada hoy (va al registro diario)", registro_institucional: "Antecedente: consta en registro de la instalación" } };
 const vcCat = (c, l) => {
   const ops = (c.catalogos && c.catalogos[l]) || [], m = VC_ETIQUETAS[l];
   return m ? ops.map(x => m[x.code] ? Object.assign({}, x, { label: m[x.code] }) : x) : ops;
@@ -1551,6 +1587,7 @@ function cabeceraVc(c) {
 }
 function pantallaVcPersonas() {
   const c = cfgActiva(), pp = regsDe(c, "PERSONA");
+  if (Estado.vcRdv) return pantallaVcRdv(c);
   const aplicadas = pp.reduce((n, r) => n + (r.dosis || []).filter(x => x.aplicada_durante_actividad).length, 0);
   // 28-oct-2026: total de dosis aplicadas hoy por vacuna, en orden alfabético, y el gran total (borradores incluidos).
   const porVac = {};
@@ -1560,7 +1597,8 @@ function pantallaVcPersonas() {
   const tablaVac = filasVac ? `<table class="totvac"><thead><tr><th>Vacuna</th><th class="n">Dosis aplicadas</th></tr></thead><tbody>${filasVac}</tbody>
       <tfoot><tr><th>Total de la jornada</th><th class="n">${aplicadas}</th></tr></tfoot></table>` : "";
   $("#app").innerHTML = `${Estado.aviso ? `<div class="aviso ok">${esc(Estado.aviso)}</div>` : ""}${avisoInstalar()}${cabeceraVc(c)}
-    <div class="card"><p>${plural(pp.length, "persona registrada", "personas registradas")} · ${plural(aplicadas, "dosis aplicada", "dosis aplicadas")} en esta jornada.</p>${tablaVac}</div>
+    <div class="card"><p>${plural(pp.length, "persona registrada", "personas registradas")} · ${plural(aplicadas, "dosis aplicada", "dosis aplicadas")} en esta jornada.</p>${tablaVac}
+      <div class="btns"><button class="btn" id="btn_rdv" type="button">Registro diario (imprimir / PDF)</button></div></div>
     <div class="card lista">${pp.map(r => {
       // 28-oct-2026: la fila dice cuántas dosis se aplicaron hoy y cuántas se registraron de antecedente.
       const ds = r.dosis || [], hoy = ds.filter(x => x.aplicada_durante_actividad), antes = ds.length - hoy.length;
@@ -1570,6 +1608,8 @@ function pantallaVcPersonas() {
         ap + (antes ? " · " + plural(antes, "dosis de antecedente", "dosis de antecedente") : ""));
     }).join("") || `<p class="muted">Todavía no hay personas. Toque <b>+ Persona</b>.</p>`}</div>`;
   Estado.aviso = null; abrirPf();
+  // Sin pasar por pintar(): window.print() tiene que salir del mismo toque, o iPhone lo bloquea.
+  $("#btn_rdv").onclick = () => { Estado.vcRdv = true; if (pantallaVcRdv(c)) window.print(); };
 }
 function pantallaVcEdicion() {
   const c = cfgActiva(), r = Estado.editando, v = validarVc(c, r), p = r.persona, d = r.demo, pr = r.proc, a = r.antecedente;
@@ -1724,6 +1764,206 @@ function pantallaEnviarVc() {
   };
   $("#btn_env").onclick = () => env(pend);
   $("#btn_env_todo").onclick = () => env(comp);
+}
+
+/* ── Registro diario de vacunación (tablero 1.4.7, 28-oct-2026) ─────────────
+   La «HOJA DE REGISTRO DIARIO - NUEVAS VACUNAS 2025» de la jornada, para imprimir
+   o guardar en PDF desde el navegador, sin conexión y sin librerías. Es la hoja que
+   la app descarga en Excel (funciones_rdv_pai.R), con sus mismas reglas:
+   - solo personas con al menos una dosis aplicada en la actividad;
+   - una fecha de registro, un juego de hojas; 6 personas por cara, 12 por hoja;
+   - lo que no tiene columna va a «Sin columna en el formato» con el Nº del renglón;
+   - lo que la jornada no captura (zona, correo, «7. G. Esencial») queda en blanco.
+   Entran solo las personas guardadas como completas: son las que la app carga.
+   Las tablas RDV_* son copia de las de R. Si cambia una, cambie la otra:
+   tests/testthat/test_vacunacion_campo.R las coteja y corre este bloque en V8
+   contra rdv_preparar(). El bloque no toca la pantalla (salvo esc). */
+/* RDV:INICIO */
+const RDV_VACUNAS = ["BCG", "Hepatitis B", "Influenza", "Hexavalente", "Rotavirus", "Neum. Conjugado-20",
+  "Varicela", "Tetra Valente Acelular", "Hepatitis A", "SPR o MMR", "Tdap", "VPH-9",
+  "VSR (Virus Sincitial Resp.)", "Td Adulto", "MR Saram/Rubeola", "Coronavirus",
+  "Fiebre Amarilla", "Meningococo", "Pre- Anti-Rabica H.", "Pos-Anti-Rabica H.",
+  "Vitamina A", "Viruela Símica", "Anti Polio IM", "Dengue", "Inmunoglobulina", "PPD"];
+const RDV_MAPA = {
+  bcg: ["BCG", ""], hepb: ["Hepatitis B", ""], influenza: ["Influenza", ""],
+  hexa: ["Hexavalente", ""], penta: ["Hexavalente", "PENTA"], rotavirus: ["Rotavirus", ""],
+  pcv20: ["Neum. Conjugado-20", ""], pcv13: ["Neum. Conjugado-20", "NEUMO-13"],
+  ppv23: ["Neum. Conjugado-20", "NEUMO-23"], varicela: ["Varicela", ""],
+  tetravalente: ["Tetra Valente Acelular", ""], hepa: ["Hepatitis A", ""],
+  mmr: ["SPR o MMR", ""], tdap: ["Tdap", ""], vph9: ["VPH-9", ""],
+  vsr: ["VSR (Virus Sincitial Resp.)", ""], td: ["Td Adulto", ""],
+  mr: ["MR Saram/Rubeola", ""], covid19: ["Coronavirus", ""], fa: ["Fiebre Amarilla", ""],
+  menacwy: ["Meningococo", ""], viruela_simica: ["Viruela Símica", ""],
+  ipv: ["Anti Polio IM", ""], dengue: ["Dengue", ""], ppd: ["PPD", ""],
+  ig_tetanica: ["Inmunoglobulina", "Ig TET"], ig_hepb: ["Inmunoglobulina", "Ig HB"],
+  ig_varicela: ["Inmunoglobulina", "Ig VZ"], ig_rabia: ["Inmunoglobulina", "Ig RAB"] };
+const RDV_DOSIS = { unica: "Única", d1: "1ra.", d2: "2da.", d3: "3ra.", d4: "4ta.", r1: "R1", r2: "R2",
+  r_anual: "Anual", adicional: "Adic.", bloqueo: "Bloq.", documentada: "Doc.", ne: "" };
+const RDV_MODALIDAD = { institucional: 1, gira: 2, visita_hogar: 3, programa_escolar: 4, jornada: 5,
+  perifocal: 6, empresarial: 7, granja: 8, feria_salud: 9 };
+const RDV_CONDICION = { embarazada: 1, puerpera: 2, cronico: 3, inmunosuprimido: 3, trasplante: 3,
+  oncologico: 3, vih_tarv: 3, privado_libertad: 4, trabajador_sexo: 5,
+  manipulador_alimentos: 6, funcionario_salud: 8, indigena: 9, migrante: 10, afrodescendiente: 11 };
+const RDV_POR_CARA = 6;
+// Lo llenado va en azul, como escrito a mano sobre el formulario; los rótulos, en negro.
+// Mismo color que RDV_AZUL de funciones_rdv_pai.R (y que .rdv .az en el CSS).
+const RDV_AZUL = "#0033CC";
+const rdvAz = v => v === "" || v == null ? "" : `<span class="az">${esc(v)}</span>`;
+const rdvDe = (o, k) => Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined;
+const rdvTxt = x => x == null ? "" : String(x).trim();
+const rdvAplicada = x => x.aplicada_durante_actividad === true || ["true", "1", "si", "sí"].includes(rdvTxt(x.aplicada_durante_actividad).toLowerCase());
+const rdvFecha = x => { const s = rdvTxt(x).slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s + "T00:00:00Z")) ? s : ""; };
+const rdvDdmm = f => f ? f.slice(8, 10) + "/" + f.slice(5, 7) + "/" + f.slice(0, 4) : "";
+// Edad para el formato: valor y código de unidad (1 días, 2 meses, 3 años), como rdv_edad().
+function rdvEdad(d, ref) {
+  const v = rdvTxt(d.edad_valor), u = rdvTxt(d.edad_unidad).toLowerCase();
+  const cod = { dias: 1, "días": 1, meses: 2, mes: 2, "años": 3, anos: 3, "año": 3 };
+  if (v !== "" && !isNaN(Number(v))) return { valor: v, unidad: rdvDe(cod, u) || 3 };
+  const fn = rdvFecha(d.fecha_nacimiento);
+  if (!fn || !ref || fn > ref) return { valor: "", unidad: "" };
+  const dias = Math.round((Date.parse(ref + "T00:00:00Z") - Date.parse(fn + "T00:00:00Z")) / 86400000);
+  if (dias < 30) return { valor: String(dias), unidad: 1 };
+  const [ya, ma, da] = fn.split("-").map(Number), [yb, mb, db] = ref.split("-").map(Number);
+  const meses = (yb - ya) * 12 + mb - ma - (db < da ? 1 : 0);
+  if (meses < 12) return { valor: String(meses), unidad: 2 };
+  return { valor: String(Math.floor(meses / 12)), unidad: 3 };
+}
+// Una persona del tablero -> un renglón del formato, o null si no tiene dosis aplicada (rdv_persona()).
+function rdvPersona(r, j, fechaJ) {
+  const dosis = (r.dosis || []).filter(rdvAplicada);
+  if (!dosis.length) return null;
+  const p = r.persona || {}, d = r.demo || {}, pr = r.proc || {};
+  const fecha = rdvFecha(r.fecha) || fechaJ;
+  const tid = rdvTxt(p.tipo_identificacion), num = rdvTxt(p.numero_identificacion);
+  const cedula = ["provisional", "no_tiene", "desconocido"].includes(tid) ? "" : tid === "pasaporte" ? (num ? "Pas. " + num : "") : num;
+  const tp = rdvTxt(d.tipo_paciente);
+  const cond = (r.condiciones || []).map(rdvTxt);
+  if (rdvTxt(d.embarazada) === "si") cond.unshift("embarazada");
+  if (tp === "migrante" || tp === "privado_libertad") cond.push(tp);
+  const cods = [...new Set(cond.map(k => rdvDe(RDV_CONDICION, k)).filter(x => x !== undefined))].sort((a, b) => a - b);
+  const vacunas = {}; RDV_VACUNAS.forEach(v => { vacunas[v] = ""; });
+  const sinColumna = [];
+  for (const x of dosis) {
+    const code = rdvTxt(x.vacuna), dk = rdvTxt(x.dosis), dl = rdvDe(RDV_DOSIS, dk) !== undefined ? RDV_DOSIS[dk] : dk;
+    const m = rdvDe(RDV_MAPA, code);
+    if (!m) { sinColumna.push({ vacuna: code, dosis: dl, lote: rdvTxt(x.lote) }); continue; }
+    let txt = m[1] ? (m[1] + (dl ? " (" + dl + ")" : "")).trim() : dl;
+    if (!txt) txt = "X";
+    vacunas[m[0]] = vacunas[m[0]] ? vacunas[m[0]] + " / " + txt : txt;
+  }
+  const ed = rdvEdad(d, fecha);
+  return { uuid: rdvTxt(r.uuid), fecha, provisional: tid === "provisional" ? num : "", cedula,
+    nombre: rdvTxt(p.nombre), apellido: rdvTxt(p.apellido), madre: rdvTxt(p.nombre_madre),
+    corregimiento: rdvTxt(pr.corregimiento) || rdvTxt(j.corregimiento), comunidad: rdvTxt(pr.comunidad) || rdvTxt(j.comunidad),
+    email: "", telefono: rdvTxt(p.telefono), zona: "", nacimiento: rdvDdmm(rdvFecha(d.fecha_nacimiento)),
+    edad: ed.valor, edad_unidad: String(ed.unidad), sexo: { M: "1", F: "2" }[rdvTxt(d.sexo)] || "",
+    tipo: ["asegurado", "beneficiario", "pensionado"].includes(tp) ? "1" : tp === "no_asegurado" ? "2" : "",
+    condicion: cods, vacunas, sin_columna: sinColumna };
+}
+// La jornada (configuración y personas del tablero) -> lo que se dibuja (rdv_preparar()).
+function rdvPreparar(c, regs) {
+  const j = c.jornada || {}, r1 = regs[0] || {};
+  const fechaJ = rdvFecha(j.fecha) || rdvFecha(r1.fecha);
+  const personas = regs.map(r => rdvPersona(r, j, fechaJ)).filter(Boolean);
+  const dias = [];
+  personas.forEach(x => { let g = dias.find(z => z.fecha === x.fecha); if (!g) dias.push(g = { fecha: x.fecha, personas: [] }); g.personas.push(x); });
+  const mod = rdvTxt((j.modalidad || {}).code);
+  return { instalacion: rdvTxt((j.instalacion || {}).nombre), funcionario: rdvTxt(j.responsable) || rdvTxt(r1.entrevistador),
+    modalidad: mod, modalidad_num: rdvDe(RDV_MODALIDAD, mod) || null,
+    lugar: [j.comunidad, j.corregimiento].map(rdvTxt).filter(Boolean).join(", "),
+    dias, sin_dosis: regs.length - personas.length, registros: regs.length,
+    dosis_antecedente: regs.reduce((n, r) => n + (r.dosis || []).filter(x => !rdvAplicada(x)).length, 0),
+    sin_columna: personas.reduce((n, x) => n + x.sin_columna.length, 0) };
+}
+// Aviso cuando la jornada no da hoja (rdv_aviso_sin_hoja()).
+function rdvAviso(prep) {
+  const n = prep.registros || 0, a = prep.dosis_antecedente || 0;
+  let txt = `La jornada tiene ${n} persona${n === 1 ? "" : "s"} registrada${n === 1 ? "" : "s"} y ninguna con dosis aplicada en la actividad`;
+  if (a > 0) txt += `; ${a} dosis anotada${a === 1 ? "" : "s"} como antecedente`;
+  return txt + ": no hay registro diario que imprimir. En la hoja entran solo las dosis con «Fuente del dato: Aplicada hoy (va al registro diario)».";
+}
+// Anchos de columna de la hoja de Excel, en la misma proporción.
+const RDV_ANCHOS = [3, 15, 15, 13, 13, 13, 3.5, 9, 3.6, 2.6, 4.5, 4, 8].concat(RDV_VACUNAS.map(() => 3.6));
+function rdvCabeza() {
+  const v = t => `<th rowspan="3" class="v"><div>${esc(t)}</div></th>`;
+  return `<thead><tr class="h1"><th rowspan="3">Nº</th><th colspan="2" rowspan="3">IDENTIFICACIÓN Y NOMBRE DEL PACIENTE</th>${v("NOMBRE DE LA MADRE / IDENTIFICACIÓN (Para hijos menor de 5 años)")}
+    <th colspan="2" rowspan="2">P R O C E D E N C I A<br>(Colocar Corregimiento/Comunidad)</th>${v("ZONA")}${v("FECHA DE NACIMIENTO (Día, Mes, Año)")}
+    <th colspan="2">EDAD</th><th>SEXO</th>${v("TIPO DE PACIENTE 1. Aseg. 2. No Aseg.")}<th>CONDICIÓN</th>${RDV_VACUNAS.map(v).join("")}</tr>
+    <tr class="h2"><th colspan="2" rowspan="2">1. Días<br>2. Meses<br>3. Años</th><th rowspan="2">1. M<br>2. F</th>
+    <th rowspan="2" class="ley">1. Emb.<br>2. Puérpera<br>3. Crónico<br>4. P. Libertad<br>5. Higiene S.<br>6. M. Alimento<br>7. G. Esencial<br>8. Fun. Salud<br>9. Pob. Indíg.<br>10. Migrante<br>11. Afrodesc.</th></tr>
+    <tr class="h3"><th>CORREGIMIENTO</th><th>COMUNIDAD</th></tr></thead>`;
+}
+// Bloque de una persona (4 renglones). x null = renglón en blanco.
+function rdvBloque(n, x, sombra) {
+  const s = sombra ? " sb" : "", t = k => x ? rdvAz(x[k]) : "", cn = x ? x.condicion.map(String) : [];
+  const vac = RDV_VACUNAS.map((v, i) => {
+    const val = x ? x.vacunas[v] : "";
+    return `<td rowspan="4" class="vac${i % 2 === 0 ? " sv" : ""}">${val ? (val.length > 5 ? `<div class="vt az">${esc(val)}</div>` : rdvAz(val)) : ""}</td>`;
+  }).join("");
+  const r4 = k => `<td rowspan="4" class="${s}">${t(k)}</td>`;
+  return `<tbody class="per"><tr class="b1"><td rowspan="4" class="num">${n}</td><td class="${s}">${t("provisional")}</td><td class="${s}">${t("cedula")}</td>${r4("madre")}
+    <td rowspan="2" class="${s}">${t("corregimiento")}</td><td rowspan="2" class="${s}">${t("comunidad")}</td>${r4("zona")}${r4("nacimiento")}${r4("edad")}${r4("edad_unidad")}${r4("sexo")}${r4("tipo")}
+    <td rowspan="2" class="${s}">${rdvAz(cn[0] || "")}</td>${vac}</tr>
+    <tr class="b2"><td class="etq${s}">No. Provisional</td><td class="etq${s}">No. De Cédula</td></tr>
+    <tr class="b1"><td class="${s}">${t("nombre")}</td><td class="${s}">${t("apellido")}</td><td colspan="2" class="izq${s}">Email: ${t("email")}</td><td rowspan="2" class="${s}">${rdvAz(cn.slice(1).join(", "))}</td></tr>
+    <tr class="b2"><td class="etq${s}">Nombre</td><td class="etq${s}">Apellido</td><td colspan="2" class="izq${s}">Tel: ${t("telefono")}</td></tr></tbody>`;
+}
+function rdvFrente(prep, fecha) {
+  // La opción elegida, con su lugar, va en azul: es lo llenado.
+  const lin = (num, txt) => prep.modalidad_num === num && prep.lugar ? rdvAz(txt + " " + prep.lugar) : esc(txt + ([2, 4, 5, 7].includes(num) ? " ______________________" : ""));
+  const [a, m, d] = fecha ? fecha.split("-") : ["", "", ""];
+  return `<div class="rdv-tit"><div class="rdv-ins">REPÚBLICA DE PANAMÁ<br>MINISTERIO DE SALUD/CAJA DE SEGURO SOCIAL<br>PROGRAMA AMPLIADO DE INMUNIZACIÓN / REGISTRO DIARIO DE VACUNACIÓN</div>
+    <div class="rdv-modbox az">${prep.modalidad_num || ""}</div>
+    <div class="rdv-mod">MODALIDAD<br>${lin(1, "1. Institucional")}<br>${lin(2, "2. Giras")}<br>${lin(3, "3. Visitas Hogar-Otros")}<br>${lin(4, "4. Programa Escolar")}</div>
+    <div class="rdv-mod">${lin(5, "5. Jornada")}<br>${lin(6, "6. Perifocal")}<br>${lin(7, "7. Empresarial")}<br>${lin(8, "8. Granjas")}<br>${lin(9, "9. Ferias de Salud")}</div></div>
+    <div class="rdv-enc"><b>INSTALACIÓN:</b><span class="l az">${esc(prep.instalacion)}</span><b>FUNCIONARIO:</b><span class="l az">${esc(prep.funcionario)}</span>
+    <b>DÍA:</b><span class="az">${d}</span><b>MES:</b><span class="az">${m}</span><b>AÑO:</b><span class="az">${a}</span></div>`;
+}
+const RDV_NOTA = "Nota:  1. Favor registrar el campo \"Nombre de la Madre y ID\" hasta los niños(as) menor de 5 años.     2. Cuando el niño(a) reciba sus vacunas de 2 meses, favor registrar en el campo \"No. Provisional\" el RN-(ID de la mamá) y en el campo \"No. de cédula\" colocar el ID del niño(a).";
+// La hoja completa: por cada fecha, sus caras (frente y dorso) y al final «Sin columna en el formato».
+// lab(code) da el rótulo de la vacuna; sin él se muestra el código, como en el Excel.
+function rdvHtml(prep, lab) {
+  lab = lab || (x => x);
+  const cols = `<colgroup>${RDV_ANCHOS.map(w => `<col style="width:${(100 * w / RDV_ANCHOS.reduce((s, x) => s + x, 0)).toFixed(3)}%">`).join("")}</colgroup>`;
+  const caras = [], sinCol = [];
+  for (const g of prep.dias) {
+    const ps = g.personas, nc = Math.max(2, 2 * Math.ceil(ps.length / (2 * RDV_POR_CARA)));
+    for (let cara = 1, n = 0; cara <= nc; cara++) {
+      let h = cara % 2 === 1 ? rdvFrente(prep, g.fecha) : "";
+      h += `<table>${cols}${rdvCabeza()}`;
+      for (let k = 1; k <= RDV_POR_CARA; k++) { const i = (cara - 1) * RDV_POR_CARA + k; n++; h += rdvBloque(n, i <= ps.length ? ps[i - 1] : null, k % 2 === 0); }
+      h += `</table>${cara % 2 === 0 ? `<p class="rdv-nota">${esc(RDV_NOTA)}</p>` : ""}<p class="rdv-firma">Firma del funcionario: ______________________________</p>`;
+      caras.push(`<section class="rdv-cara">${h}</section>`);
+    }
+    ps.forEach((x, i) => x.sin_columna.forEach(s => sinCol.push(`<tr class="az"><td>${rdvDdmm(g.fecha)}</td><td>${i + 1}</td><td>${esc((x.nombre + " " + x.apellido).trim())}</td>
+      <td>${esc(lab(s.vacuna))}</td><td>${esc(s.dosis)}</td><td>${esc(s.lote)}</td></tr>`)));
+  }
+  if (sinCol.length) caras.push(`<section class="rdv-cara rdv-sincol"><h3>Sin columna en el formato</h3>
+    <p>Dosis aplicadas cuya vacuna no tiene columna en la hoja oficial. Anótelas a mano en el renglón (Nº) de la persona.</p>
+    <table><thead><tr><th>Fecha</th><th>Nº</th><th>Persona</th><th>Vacuna</th><th>Dosis</th><th>Lote</th></tr></thead><tbody>${sinCol.join("")}</tbody></table></section>`);
+  return caras.join("");
+}
+/* RDV:FIN */
+// Las personas que entran a la hoja: las completas, en el orden en que se registraron.
+const rdvRegs = c => regsDe(c, "PERSONA").filter(r => r.estado === "COMPLETA")
+  .sort((a, b) => String(a.creado || "").localeCompare(String(b.creado || "")));
+function pantallaVcRdv(c) {
+  const todas = regsDe(c, "PERSONA"), regs = rdvRegs(c), prep = rdvPreparar(c, regs), hay = prep.dias.length > 0;
+  const borr = todas.length - regs.length;
+  $("#fab").classList.add("oculto");
+  $("#app").innerHTML = `<div class="card no-print"><div class="btns" style="margin-top:0"><button class="btn" id="btn_rdv_volver" type="button">← Personas</button>
+    ${hay ? `<button class="btn pri" id="btn_rdv_imp" type="button">Imprimir / guardar PDF</button>` : ""}</div>
+    <h1>Registro diario de vacunación</h1>
+    <p class="small muted">Hoja de registro diario, nuevas vacunas 2025, en oficio horizontal. Para el PDF elija «Guardar como PDF» como impresora y, si lo pregunta, papel Oficio (Legal) y orientación horizontal. En iPhone o iPad, en la ventana de impresión toque Compartir y luego Guardar en Archivos.</p>
+    ${borr ? `<div class="aviso warn">${borr === 1 ? "1 borrador no entra en la hoja: guárdelo como completo para que entre." : borr + " borradores no entran en la hoja: guárdelos como completos para que entren."}</div>` : ""}
+    ${hay ? `<p class="small">${plural(prep.registros - prep.sin_dosis, "persona con dosis aplicada", "personas con dosis aplicada")}${prep.sin_dosis ? ` · ${plural(prep.sin_dosis, "persona sin dosis aplicada no entra", "personas sin dosis aplicada no entran")}` : ""}.</p>
+    ${prep.sin_columna ? `<div class="aviso info">${plural(prep.sin_columna, "dosis no tiene", "dosis no tienen")} columna en el formato: se listan en la última página, «Sin columna en el formato», con el Nº del renglón de la persona.</div>` : ""}`
+      : `<div class="aviso warn">${esc(rdvAviso(prep))}</div>`}</div>
+    ${hay ? `<div class="rdv-vista"><div class="rdv">${rdvHtml(prep, code => vcLab(c, "vacunas", code))}</div></div>` : ""}`;
+  $("#btn_rdv_volver").onclick = () => { Estado.vcRdv = false; pintar(); window.scrollTo(0, 0); };
+  const b = $("#btn_rdv_imp");
+  if (b) b.onclick = () => window.print();
+  return hay;
 }
 
 iniciar();
